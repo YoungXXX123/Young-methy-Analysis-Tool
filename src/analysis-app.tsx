@@ -81,78 +81,116 @@ function cpgCsv(rows: CpgRow[]) {
   return `\uFEFF${lines.join("\n")}`;
 }
 
+function niceTickStep(range: number, targetTicks: number) {
+  const roughStep = range / Math.max(1, targetTicks);
+  const magnitude = 10 ** Math.floor(Math.log10(Math.max(roughStep, Number.EPSILON)));
+  const normalized = roughStep / magnitude;
+  const niceNormalized = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return niceNormalized * magnitude;
+}
+
 function Chart({ rows }: { rows: CpgRow[] }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ratio = window.devicePixelRatio || 1;
-    const width = canvas.clientWidth;
-    const height = 278;
-    canvas.width = width * ratio;
-    canvas.height = height * ratio;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    context.scale(ratio, ratio);
-    context.clearRect(0, 0, width, height);
-    context.fillStyle = "#fbfcfc";
-    context.fillRect(0, 0, width, height);
-    const padding = { left: 54, right: 24, top: 20, bottom: 42 };
-    const chartWidth = width - padding.left - padding.right;
-    const chartHeight = height - padding.top - padding.bottom;
-    const measured = rows.filter((row) => row.averageC !== null);
-    const minDistance = Math.min(...measured.map((row) => row.distance), -1);
-    const maxDistance = Math.max(...measured.map((row) => row.distance), 1);
-    const x = (distance: number) => padding.left + ((distance - minDistance) / Math.max(1, maxDistance - minDistance)) * chartWidth;
-    const y = (value: number) => padding.top + (1 - value) * chartHeight;
+    const draw = () => {
+      const ratio = window.devicePixelRatio || 1;
+      const width = Math.round(canvas.clientWidth);
+      const height = Math.round(canvas.clientHeight);
+      if (!width || !height) return;
+      canvas.width = Math.round(width * ratio);
+      canvas.height = Math.round(height * ratio);
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.scale(ratio, ratio);
+      context.clearRect(0, 0, width, height);
+      context.fillStyle = "#fbfcfc";
+      context.fillRect(0, 0, width, height);
+      const padding = { left: 58, right: 24, top: 20, bottom: 58 };
+      const chartWidth = width - padding.left - padding.right;
+      const chartHeight = height - padding.top - padding.bottom;
+      const measured = rows.filter((row) => row.averageC !== null);
+      const minDistance = Math.min(...measured.map((row) => row.distance), -1);
+      const maxDistance = Math.max(...measured.map((row) => row.distance), 1);
+      const distanceRange = Math.max(1, maxDistance - minDistance);
+      const x = (distance: number) => padding.left + ((distance - minDistance) / distanceRange) * chartWidth;
+      const y = (value: number) => padding.top + (1 - value) * chartHeight;
 
-    context.font = "11px Arial";
-    context.textAlign = "right";
-    context.textBaseline = "middle";
-    for (let tick = 0; tick <= 4; tick += 1) {
-      const value = tick / 4;
-      const yy = y(value);
-      context.strokeStyle = "#e0e7e8";
-      context.lineWidth = 1;
+      context.font = "12px Arial";
+      context.textAlign = "right";
+      context.textBaseline = "middle";
+      for (let tick = 0; tick <= 4; tick += 1) {
+        const value = tick / 4;
+        const yy = y(value);
+        context.strokeStyle = "#e0e7e8";
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(padding.left, yy);
+        context.lineTo(width - padding.right, yy);
+        context.stroke();
+        context.fillStyle = "#6d7d82";
+        context.fillText(`${Math.round(value * 100)}%`, padding.left - 9, yy);
+      }
+
+      const xStep = niceTickStep(distanceRange, Math.max(3, Math.floor(chartWidth / 72)));
+      const firstTick = Math.ceil(minDistance / xStep) * xStep;
+      const decimals = xStep < 1 ? Math.min(2, Math.ceil(-Math.log10(xStep))) : 0;
+      context.textAlign = "center";
+      context.textBaseline = "top";
+      context.font = "11px Arial";
+      for (let tick = firstTick; tick <= maxDistance + xStep * 0.001; tick += xStep) {
+        const normalizedTick = Math.abs(tick) < xStep * 0.001 ? 0 : tick;
+        const xx = x(normalizedTick);
+        context.strokeStyle = "#aebbbc";
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(xx, y(0));
+        context.lineTo(xx, y(0) + 5);
+        context.stroke();
+        context.fillStyle = "#5f7176";
+        context.fillText(normalizedTick.toFixed(decimals), xx, y(0) + 8);
+      }
+
+      if (minDistance < 0 && maxDistance > 0) {
+        context.strokeStyle = "#8a72b5";
+        context.setLineDash([5, 4]);
+        context.beginPath();
+        context.moveTo(x(0), padding.top);
+        context.lineTo(x(0), padding.top + chartHeight);
+        context.stroke();
+        context.setLineDash([]);
+      }
+      context.strokeStyle = "#176d78";
+      context.lineWidth = 2;
       context.beginPath();
-      context.moveTo(padding.left, yy);
-      context.lineTo(width - padding.right, yy);
+      measured.forEach((row, index) => {
+        const xx = x(row.distance);
+        const yy = y(row.averageC ?? 0);
+        if (index === 0) context.moveTo(xx, yy);
+        else context.lineTo(xx, yy);
+      });
       context.stroke();
-      context.fillStyle = "#6d7d82";
-      context.fillText(`${Math.round(value * 100)}%`, padding.left - 9, yy);
-    }
-    if (minDistance < 0 && maxDistance > 0) {
-      context.strokeStyle = "#8a72b5";
-      context.setLineDash([5, 4]);
-      context.beginPath();
-      context.moveTo(x(0), padding.top);
-      context.lineTo(x(0), padding.top + chartHeight);
-      context.stroke();
-      context.setLineDash([]);
-    }
-    context.strokeStyle = "#176d78";
-    context.lineWidth = 2;
-    context.beginPath();
-    measured.forEach((row, index) => {
-      const xx = x(row.distance);
-      const yy = y(row.averageC ?? 0);
-      if (index === 0) context.moveTo(xx, yy);
-      else context.lineTo(xx, yy);
-    });
-    context.stroke();
-    measured.forEach((row) => {
-      context.beginPath();
-      context.fillStyle = "#f4b942";
-      context.strokeStyle = "#835f13";
-      context.lineWidth = 1.5;
-      context.arc(x(row.distance), y(row.averageC ?? 0), 4.5, 0, Math.PI * 2);
-      context.fill();
-      context.stroke();
-    });
-    context.fillStyle = "#596b70";
-    context.textAlign = "center";
-    context.textBaseline = "bottom";
-    context.fillText("距靶点中心距离（bp）", padding.left + chartWidth / 2, height - 6);
+      measured.forEach((row) => {
+        context.beginPath();
+        context.fillStyle = "#f4b942";
+        context.strokeStyle = "#835f13";
+        context.lineWidth = 1.5;
+        context.arc(x(row.distance), y(row.averageC ?? 0), 4.5, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+      });
+      context.fillStyle = "#596b70";
+      context.font = "12px Arial";
+      context.textAlign = "center";
+      context.textBaseline = "bottom";
+      context.fillText("距靶点中心距离（bp）", padding.left + chartWidth / 2, height - 7);
+    };
+
+    draw();
+    const observer = new ResizeObserver(draw);
+    observer.observe(canvas);
+    return () => observer.disconnect();
   }, [rows]);
   return <canvas ref={canvasRef} className="distance-chart" aria-label="CpG distance analysis chart" />;
 }

@@ -53,11 +53,11 @@ function measuredNonCpgMask(reference: string, results: AnalysisResult[]) {
   return mask;
 }
 
-function fitLabel(context: CanvasRenderingContext2D, label: string, maxWidth: number) {
+export function fitLabel(context: Pick<CanvasRenderingContext2D, "measureText">, label: string, maxWidth: number) {
   if (context.measureText(label).width <= maxWidth) return label;
   let shortened = label;
-  while (shortened.length > 8 && context.measureText(`…${shortened}`).width > maxWidth) shortened = shortened.slice(1);
-  return `…${shortened}`;
+  while (shortened.length > 1 && context.measureText(`${shortened}…`).width > maxWidth) shortened = shortened.slice(0, -1);
+  return `${shortened}…`;
 }
 
 export function renderHeatmap(reference: string, allResults: AnalysisResult[], options: HeatmapOptions) {
@@ -125,9 +125,9 @@ export function renderHeatmap(reference: string, allResults: AnalysisResult[], o
           context.strokeStyle = "#dde4e5";
           context.lineWidth = 0.7;
           context.strokeRect(x, y, cellWidth, cellHeight);
-          if (Number.isFinite(value) && value >= 0.05 && focused) {
-            context.fillStyle = value > 0.56 ? "#ffffff" : COLORS.ink;
-            context.font = `700 ${options.chunkSize > 70 ? 8 : 9}px Arial`;
+          if (Number.isFinite(value) && value >= 0.05) {
+            context.fillStyle = focused ? (value > 0.56 ? "#ffffff" : COLORS.ink) : "#aeb8bb";
+            context.font = `${focused ? 700 : 400} ${options.chunkSize > 70 ? 8 : 9}px Arial`;
             context.textAlign = "center";
             context.fillText(`${Math.floor(value * 100)}`, x + cellWidth / 2, y + cellHeight / 2 + 0.5);
             context.textAlign = "left";

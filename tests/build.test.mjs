@@ -26,4 +26,7 @@ test("retains the analysis and export capabilities", async () => {
   assert.match(engine, /match\[up\] - 20/);
   assert.match(engine, /gapQuery\[up\] - 2/);
   assert.match(heatmap, /renderHeatmap/);
+  assert.match(heatmap, /shortened\.slice\(0, -1\)/);
+  assert.match(heatmap, /focused \? 700 : 400/);
+  assert.doesNotMatch(heatmap, /value >= 0\.05 && focused/);
 });

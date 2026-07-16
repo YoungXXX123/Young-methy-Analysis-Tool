@@ -9,6 +9,7 @@ import {
   type Base,
   type BaseProportion,
 } from "../src/analysis-engine";
+import { fitLabel } from "../src/heatmap";
 
 const BASES: Base[] = ["A", "C", "G", "T"];
 
@@ -125,4 +126,9 @@ test("parses ABIF channel order, peaks, sequence, and quality", () => {
     const total = BASES.reduce((sum, base) => sum + item[base], 0);
     assert.ok(Math.abs(total - 1) < 1e-9);
   });
+});
+
+test("truncates long heatmap labels from the end", () => {
+  const context = { measureText: (text: string) => ({ width: text.length }) };
+  assert.equal(fitLabel(context, "635-01_C12_long_sample.ab1", 14), "635-01_C12_lo…");
 });
