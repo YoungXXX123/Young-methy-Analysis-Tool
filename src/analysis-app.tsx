@@ -27,6 +27,7 @@ import {
   analyzeFile,
   BASES,
   createCpgRows,
+  mergeAnalysisResults,
   sanitizeSequence,
   type AnalysisFailure,
   type AnalysisResult,
@@ -204,21 +205,29 @@ export default function AnalysisApp() {
   const [focusAllC, setFocusAllC] = useState(false);
   const [chunkSize, setChunkSize] = useState(50);
   const [trimActive, setTrimActive] = useState(false);
+  const [mergeSegments, setMergeSegments] = useState(false);
   const [qualityThreshold, setQualityThreshold] = useState(20);
   const [windowSize, setWindowSize] = useState(20);
   const [positions, setPositions] = useState("47");
-  const [results, setResults] = useState<AnalysisResult[]>([]);
+  const [rawResults, setRawResults] = useState<AnalysisResult[]>([]);
   const [failures, setFailures] = useState<AnalysisFailure[]>([]);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [notice, setNotice] = useState<Notice>(null);
   const [dragging, setDragging] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(true);
+  const [segmentsOpen, setSegmentsOpen] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
+  const rawPreviewRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const reference = useMemo(() => sanitizeSequence(referenceInput), [referenceInput]);
   const target = useMemo(() => sanitizeSequence(targetInput), [targetInput]);
+  const results = useMemo(() => (
+    mergeSegments && rawResults.length
+      ? [mergeAnalysisResults(`合并样本（${rawResults.length} 个分段）`, rawResults)]
+      : rawResults
+  ), [mergeSegments, rawResults]);
   const cpgRows = useMemo(() => createCpgRows(reference, results, target), [reference, results, target]);
   const targetPosition = target ? reference.indexOf(target) : -1;
 
@@ -243,7 +252,7 @@ export default function AnalysisApp() {
     setRunning(true);
     setProgress(0);
     setNotice(null);
-    setResults([]);
+    setRawResults([]);
     setFailures([]);
     const successes: AnalysisResult[] = [];
     const errors: AnalysisFailure[] = [];
@@ -256,11 +265,11 @@ export default function AnalysisApp() {
       setProgress(Math.round(((index + 1) / files.length) * 100));
       await new Promise((resolve) => window.setTimeout(resolve, 12));
     }
-    setResults(successes);
+    setRawResults(successes);
     setFailures(errors);
     setRunning(false);
     setNotice(successes.length
-      ? { tone: "success", message: `分析完成：${successes.length} 个样本成功${errors.length ? `，${errors.length} 个失败` : ""}。` }
+      ? { tone: "success", message: `分析完成：${successes.length} 个 AB1 分段成功${mergeSegments ? "，已合并为 1 个样本" : ""}${errors.length ? `，${errors.length} 个失败` : ""}。` }
       : { tone: "error", message: "没有文件成功完成分析，请检查 AB1 文件和参考序列。" });
   };
 
@@ -275,6 +284,18 @@ export default function AnalysisApp() {
       preview: true,
     }));
   }, [results, reference, target, chunkSize, focusCpg, focusAllC, highlightTarget]);
+
+  useEffect(() => {
+    if (!mergeSegments || !segmentsOpen || !rawResults.length || !rawPreviewRef.current) return;
+    rawPreviewRef.current.replaceChildren(renderHeatmap(reference, rawResults, {
+      chunkSize,
+      focusCpg,
+      focusAllC,
+      highlightTarget,
+      targetSequence: target,
+      preview: true,
+    }));
+  }, [mergeSegments, segmentsOpen, rawResults, reference, target, chunkSize, focusCpg, focusAllC, highlightTarget]);
 
   const downloadFullHeatmap = () => {
     const canvas = renderHeatmap(reference, results, {
@@ -340,6 +361,7 @@ export default function AnalysisApp() {
               <Toggle checked={focusCpg} onChange={setFocusCpg} label="聚焦 CpG 位点" />
               <Toggle checked={focusAllC} onChange={setFocusAllC} label="聚焦全部 C 位点" />
               <div className="range-field"><div><strong>每块碱基数</strong><output>{chunkSize}</output></div><input type="range" min="20" max="100" step="10" value={chunkSize} onChange={(event) => setChunkSize(Number(event.target.value))} /></div>
+              <Toggle checked={mergeSegments} onChange={setMergeSegments} label="合并分段测序" hint="按参考坐标合并，重叠位点优先最高 Phred" />
               <Toggle checked={trimActive} onChange={setTrimActive} label="剪切低质量末端" hint="基于滑动窗口 Phred 均值" />
               {trimActive ? <div className="paired-fields"><label>Phred 阈值<input type="number" min="1" max="60" value={qualityThreshold} onChange={(event) => setQualityThreshold(Number(event.target.value))} /></label><label>窗口大小<input type="number" min="2" max="100" value={windowSize} onChange={(event) => setWindowSize(Number(event.target.value))} /></label></div> : null}
             </div> : null}
@@ -355,7 +377,7 @@ export default function AnalysisApp() {
         <section className="results-panel">
           <div className="results-header">
             <div><span className="eyebrow">Workspace</span><h2>分析结果</h2></div>
-            {results.length ? <button className="secondary-button" type="button" onClick={() => { setResults([]); setFailures([]); setNotice(null); }}><RotateCcw size={15} /> 重置结果</button> : null}
+            {results.length ? <button className="secondary-button" type="button" onClick={() => { setRawResults([]); setFailures([]); setNotice(null); setSegmentsOpen(false); }}><RotateCcw size={15} /> 重置结果</button> : null}
           </div>
 
           {notice ? <div className={`notice ${notice.tone}`}>{notice.tone === "success" ? <Check size={17} /> : notice.tone === "error" ? <Info size={17} /> : <Info size={17} />}<span>{notice.message}</span></div> : null}
@@ -371,7 +393,7 @@ export default function AnalysisApp() {
 
           {results.length ? <div className="results-stack">
             <section className="summary-strip">
-              <Metric value={String(results.length)} label="成功样本" accent />
+              <Metric value={String(results.length)} label={mergeSegments ? "合并样本" : "成功样本"} accent />
               <Metric value={String(failures.length)} label="失败样本" />
               <Metric value={String(reference.length)} label="参考长度 / bp" />
               <Metric value={String(cpgRows.length)} label="CpG 位点" />
@@ -379,10 +401,23 @@ export default function AnalysisApp() {
             </section>
 
             <section className="result-section">
-              <div className="result-title"><div className="title-icon"><BarChart3 size={18} /></div><div><h3>比对热图预览</h3><p>显示前 3 个样本、前 5 个分块；数值为各碱基峰信号占比（%）</p></div><button className="primary-action" type="button" onClick={downloadFullHeatmap}><Download size={16} /> 下载完整 PNG</button></div>
+              <div className="result-title"><div className="title-icon"><BarChart3 size={18} /></div><div><h3>比对热图预览</h3><p>{mergeSegments ? `已将 ${rawResults.length} 个 AB1 分段合并为一个样本；` : "显示前 3 个样本、"}前 5 个分块；数值为各碱基峰信号占比（%）</p></div><button className="primary-action" type="button" onClick={downloadFullHeatmap}><Download size={16} /> 下载完整 PNG</button></div>
               <div className="legend"><span><i className="legend-box match" />匹配</span><span><i className="legend-box mismatch" />错配</span><span><i className="legend-line target" />靶点</span><span><i className="legend-letter cpg">CG</i>CpG</span><span><i className="legend-letter cytosine">C</i>非 CpG C</span></div>
               <div className="heatmap-viewport" ref={previewRef} />
+              {mergeSegments ? <div className="raw-segments">
+                <button className="raw-segments-toggle" type="button" onClick={() => setSegmentsOpen((value) => !value)} aria-expanded={segmentsOpen}>
+                  <span><FileArchive size={15} /> 原始分段预览（{rawResults.length}）</span>
+                  <ChevronDown size={17} className={segmentsOpen ? "rotated" : ""} />
+                </button>
+                {segmentsOpen ? <div className="raw-segments-body"><p>显示前 3 个原始分段、前 5 个分块；合并结果不受预览数量限制。</p><div className="heatmap-viewport raw-heatmap" ref={rawPreviewRef} /></div> : null}
+              </div> : null}
             </section>
+
+            {mergeSegments ? <section className="result-section">
+              <div className="result-title"><div className="title-icon amber"><Info size={18} /></div><div><h3>分段映射质控</h3><p>仅报告现有比对的范围与质量，不改变或自动剔除比对结果</p></div></div>
+              {results[0]?.mergeSummary ? <div className="merge-summary"><span><strong>{results[0].mergeSummary.segmentCount}</strong> 个分段</span><span><strong>{results[0].mergeSummary.coveredPositions}</strong> bp 覆盖</span><span><strong>{results[0].mergeSummary.overlapPositions}</strong> 个重叠位点</span><span><strong>{results[0].mergeSummary.conflictingPositions}</strong> 个碱基冲突</span></div> : null}
+              <div className="table-wrap mapping-table-wrap"><table className="mapping-table"><thead><tr><th>AB1 分段</th><th>参考区间</th><th>方向</th><th>有效比对</th><th>匹配率</th><th>得分</th><th>质控提示</th></tr></thead><tbody>{rawResults.map((result, index) => <tr key={`${result.name}:${index}`}><td title={result.name}><strong>{result.name}</strong></td><td>{result.mapping.referenceStart ?? "—"}–{result.mapping.referenceEnd ?? "—"}</td><td>{result.orientation === "reverse" ? "反向" : "正向"}</td><td>{result.mapping.alignedBases} / {result.mapping.queryLength} bp</td><td>{(result.mapping.identity * 100).toFixed(1)}%</td><td>{result.score.toFixed(0)}</td><td className={result.mapping.warnings.length ? "mapping-warning" : "mapping-pass"}>{result.mapping.warnings.length ? result.mapping.warnings.join("；") : "通过"}</td></tr>)}</tbody></table></div>
+            </section> : null}
 
             <section className="result-section">
               <div className="result-title"><div className="title-icon amber"><Table2 size={18} /></div><div><h3>CpG 距离分析</h3><p>相对靶点中心的 CpG 位置与平均 C 峰信号比例</p></div><button className="secondary-button" type="button" onClick={() => downloadText(cpgCsv(cpgRows), "CpG_Distance_Analysis.csv")} disabled={!cpgRows.length}><FileDown size={16} /> 下载 CSV</button></div>

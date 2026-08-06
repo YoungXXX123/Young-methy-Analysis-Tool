@@ -21,10 +21,15 @@ test("retains the analysis and export capabilities", async () => {
   assert.match(app, /下载完整 PNG/);
   assert.match(app, /CpG_Distance_Analysis\.csv/);
   assert.match(app, /任意位点查询/);
+  assert.match(app, /合并分段测序/);
+  assert.match(app, /原始分段预览/);
+  assert.match(app, /分段映射质控/);
   assert.match(engine, /readAscii\(view, 0, 4\) !== "ABIF"/);
   assert.match(engine, /reference\[i - 1\] === query\[j - 1\] \? 5 : -4/);
   assert.match(engine, /match\[up\] - 20/);
   assert.match(engine, /gapQuery\[up\] - 2/);
+  assert.match(engine, /mergeAnalysisResults/);
+  assert.match(engine, /Number\(incomingQuality\) > Number\(selectedQuality\)/);
   assert.match(heatmap, /renderHeatmap/);
   assert.match(heatmap, /shortened\.slice\(0, -1\)/);
   assert.match(heatmap, /focused \? 700 : 400/);

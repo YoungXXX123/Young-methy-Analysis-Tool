@@ -2,12 +2,35 @@ export type Base = "A" | "C" | "G" | "T";
 
 export type BaseProportion = Record<Base, number> & { calledBase: Base };
 
+export type MappingSummary = {
+  referenceStart: number | null;
+  referenceEnd: number | null;
+  queryLength: number;
+  alignedBases: number;
+  matches: number;
+  identity: number;
+  coverageRatio: number;
+  warnings: string[];
+};
+
+export type MergeSummary = {
+  segmentCount: number;
+  coveredPositions: number;
+  overlapPositions: number;
+  conflictingPositions: number;
+};
+
 export type AnalysisResult = {
   name: string;
   matrix: Record<Base, number[]>;
   matchStatus: Array<boolean | null>;
-  orientation: "forward" | "reverse";
+  orientation: "forward" | "reverse" | "mixed";
   score: number;
+  mappedQuality: Map<number, number>;
+  mappedIndices: number[];
+  mapping: MappingSummary;
+  sourceNames?: string[];
+  mergeSummary?: MergeSummary;
 };
 
 export type AnalysisFailure = { name: string; message: string };
@@ -293,19 +316,120 @@ export function mapToReference(reference: string, record: AbiRecord): Omit<Analy
 
   const matrix = Object.fromEntries(BASES.map((base) => [base, Array(reference.length).fill(Number.NaN)])) as Record<Base, number[]>;
   const matchStatus: Array<boolean | null> = Array(reference.length).fill(null);
+  const mappedQuality = new Map<number, number>();
+  let matches = 0;
   alignment.pairs.forEach(([referenceIndex, queryIndex]) => {
     const item = finalRecord.proportions[queryIndex];
     if (!item) return;
     BASES.forEach((base) => {
       matrix[base][referenceIndex] = item[base];
     });
-    matchStatus[referenceIndex] = item.calledBase === reference[referenceIndex];
+    const matched = item.calledBase === reference[referenceIndex];
+    matchStatus[referenceIndex] = matched;
+    if (matched) matches += 1;
+    const quality = finalRecord.quality[queryIndex];
+    if (Number.isFinite(quality)) mappedQuality.set(referenceIndex, quality);
   });
+  const alignedBases = alignment.pairs.length;
+  const identity = alignedBases ? matches / alignedBases : 0;
+  const coverageRatio = finalRecord.sequence.length ? alignedBases / finalRecord.sequence.length : 0;
+  const warnings: string[] = [];
+  if (finalRecord.quality.length < finalRecord.sequence.length) warnings.push("部分或全部位点缺少 Phred 质量值");
+  if (finalRecord.sequence.length >= 30 && alignedBases < 30) warnings.push("有效比对长度少于 30 bp");
+  if (coverageRatio < 0.5) warnings.push(`仅比对 ${(coverageRatio * 100).toFixed(1)}% 的读段`);
+  if (identity < 0.7) warnings.push(`匹配率较低（${(identity * 100).toFixed(1)}%）`);
   return {
     matrix,
     matchStatus,
     orientation: useReverse ? "reverse" : "forward",
     score: alignment.score,
+    mappedQuality,
+    mappedIndices: alignment.pairs.map(([referenceIndex]) => referenceIndex),
+    mapping: {
+      referenceStart: alignedBases ? alignment.pairs[0][0] + 1 : null,
+      referenceEnd: alignedBases ? alignment.pairs[alignedBases - 1][0] + 1 : null,
+      queryLength: finalRecord.sequence.length,
+      alignedBases,
+      matches,
+      identity,
+      coverageRatio,
+      warnings,
+    },
+  };
+}
+
+function calledBaseAt(matrix: Record<Base, number[]>, index: number) {
+  return BASES.reduce((best, base) => (
+    matrix[base][index] > matrix[best][index] ? base : best
+  ), "A");
+}
+
+export function mergeAnalysisResults(name: string, segments: AnalysisResult[]): AnalysisResult {
+  if (!segments.length) throw new Error("没有可合并的分段结果");
+  const referenceLength = segments[0].matrix.A.length;
+  if (segments.some((segment) => segment.matrix.A.length !== referenceLength)) {
+    throw new Error("分段结果使用了不同长度的参考序列");
+  }
+
+  const matrix = Object.fromEntries(BASES.map((base) => [base, Array(referenceLength).fill(Number.NaN)])) as Record<Base, number[]>;
+  const matchStatus: Array<boolean | null> = Array(referenceLength).fill(null);
+  const mappedQuality = new Map<number, number>();
+  const coveredIndices = new Set<number>();
+  const overlapIndices = new Set<number>();
+  const conflictingIndices = new Set<number>();
+
+  segments.forEach((segment) => {
+    segment.mappedIndices.forEach((index) => {
+      if (!Number.isFinite(segment.matrix.A[index])) return;
+      const hadValue = Number.isFinite(matrix.A[index]);
+      if (hadValue && calledBaseAt(segment.matrix, index) !== calledBaseAt(matrix, index)) {
+        conflictingIndices.add(index);
+      }
+      coveredIndices.add(index);
+      if (hadValue) overlapIndices.add(index);
+
+      const incomingQuality = segment.mappedQuality.get(index);
+      const selectedQuality = mappedQuality.get(index);
+      const shouldReplace = !hadValue || (
+        Number.isFinite(incomingQuality) && (!Number.isFinite(selectedQuality) || Number(incomingQuality) > Number(selectedQuality))
+      );
+      if (!shouldReplace) return;
+      BASES.forEach((base) => {
+        matrix[base][index] = segment.matrix[base][index];
+      });
+      matchStatus[index] = segment.matchStatus[index];
+      if (Number.isFinite(incomingQuality)) mappedQuality.set(index, Number(incomingQuality));
+    });
+  });
+
+  const mappedIndices = [...coveredIndices].sort((a, b) => a - b);
+  const matches = mappedIndices.filter((index) => matchStatus[index] === true).length;
+  const orientations = new Set(segments.map((segment) => segment.orientation));
+  return {
+    name,
+    matrix,
+    matchStatus,
+    orientation: orientations.size === 1 ? segments[0].orientation : "mixed",
+    score: segments.reduce((sum, segment) => sum + segment.score, 0),
+    mappedQuality,
+    mappedIndices,
+    mapping: {
+      referenceStart: mappedIndices.length ? mappedIndices[0] + 1 : null,
+      referenceEnd: mappedIndices.length ? mappedIndices[mappedIndices.length - 1] + 1 : null,
+      queryLength: segments.reduce((sum, segment) => sum + segment.mapping.queryLength, 0),
+      alignedBases: mappedIndices.length,
+      matches,
+      identity: mappedIndices.length ? matches / mappedIndices.length : 0,
+      coverageRatio: referenceLength ? mappedIndices.length / referenceLength : 0,
+      warnings: [],
+    },
+    sourceNames: segments.map((segment) => segment.name),
+    mergeSummary: {
+      segmentCount: segments.length,
+      coveredPositions: mappedIndices.length,
+      overlapPositions: overlapIndices.size,
+      conflictingPositions: conflictingIndices.size,
+    },
   };
 }
 
