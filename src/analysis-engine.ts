@@ -36,6 +36,9 @@ export type AnalysisResult = {
 export type AnalysisFailure = { name: string; message: string };
 
 export type CpgRow = {
+  targetNumber: number;
+  targetSequence: string;
+  targetStart: number | null;
   position: number;
   distance: number;
   averageC: number | null;
@@ -374,6 +377,7 @@ export function mergeAnalysisResults(name: string, segments: AnalysisResult[]): 
   const matrix = Object.fromEntries(BASES.map((base) => [base, Array(referenceLength).fill(Number.NaN)])) as Record<Base, number[]>;
   const matchStatus: Array<boolean | null> = Array(referenceLength).fill(null);
   const mappedQuality = new Map<number, number>();
+  const selectedScores = new Map<number, number>();
   const coveredIndices = new Set<number>();
   const overlapIndices = new Set<number>();
   const conflictingIndices = new Set<number>();
@@ -389,16 +393,16 @@ export function mergeAnalysisResults(name: string, segments: AnalysisResult[]): 
       if (hadValue) overlapIndices.add(index);
 
       const incomingQuality = segment.mappedQuality.get(index);
-      const selectedQuality = mappedQuality.get(index);
-      const shouldReplace = !hadValue || (
-        Number.isFinite(incomingQuality) && (!Number.isFinite(selectedQuality) || Number(incomingQuality) > Number(selectedQuality))
-      );
+      const selectedScore = selectedScores.get(index);
+      const shouldReplace = !hadValue || !Number.isFinite(selectedScore) || segment.score > Number(selectedScore);
       if (!shouldReplace) return;
       BASES.forEach((base) => {
         matrix[base][index] = segment.matrix[base][index];
       });
       matchStatus[index] = segment.matchStatus[index];
+      selectedScores.set(index, segment.score);
       if (Number.isFinite(incomingQuality)) mappedQuality.set(index, Number(incomingQuality));
+      else mappedQuality.delete(index);
     });
   });
 
@@ -478,21 +482,48 @@ export function getMeasuredNonCpgCMask(reference: string, results: AnalysisResul
   return mask;
 }
 
-export function createCpgRows(reference: string, results: AnalysisResult[], targetSequence: string): CpgRow[] {
-  const targetStart = targetSequence ? reference.indexOf(targetSequence) : -1;
-  const targetCenter = targetStart >= 0 ? targetStart + (targetSequence.length - 1) / 2 : reference.length / 2;
+export function createCpgRows(reference: string, results: AnalysisResult[], targetSequences: string | string[]): CpgRow[] {
+  const targets = (Array.isArray(targetSequences) ? targetSequences : [targetSequences]).filter(Boolean);
+  const targetContexts = targets.length ? targets.map((targetSequence, index) => {
+    const targetStart = reference.indexOf(targetSequence);
+    return {
+      targetNumber: index + 1,
+      targetSequence,
+      targetStart: targetStart >= 0 ? targetStart : null,
+      targetCenter: targetStart >= 0 ? targetStart + (targetSequence.length - 1) / 2 : reference.length / 2,
+    };
+  }) : [{
+    targetNumber: 0,
+    targetSequence: "",
+    targetStart: null,
+    targetCenter: reference.length / 2,
+  }];
   const rows: CpgRow[] = [];
-  for (let index = 0; index < reference.length - 1; index += 1) {
-    if (reference[index] !== "C" || reference[index + 1] !== "G") continue;
-    const values = results.map((result) => result.matrix.C[index]).filter((value) => Number.isFinite(value));
-    rows.push({
-      position: index + 1,
-      distance: Math.round((index - targetCenter) * 10) / 10,
-      averageC: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null,
-      measuredSamples: values.length,
-    });
-  }
+  targetContexts.forEach((target) => {
+    for (let index = 0; index < reference.length - 1; index += 1) {
+      if (reference[index] !== "C" || reference[index + 1] !== "G") continue;
+      const values = results.map((result) => result.matrix.C[index]).filter((value) => Number.isFinite(value));
+      rows.push({
+        targetNumber: target.targetNumber,
+        targetSequence: target.targetSequence,
+        targetStart: target.targetStart,
+        position: index + 1,
+        distance: Math.round((index - target.targetCenter) * 10) / 10,
+        averageC: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null,
+        measuredSamples: values.length,
+      });
+    }
+  });
   return rows;
+}
+
+export function parseTargetSequences(value: string) {
+  const seen = new Set<string>();
+  return value.toUpperCase().split(/[\s,;，；]+/).map((item) => item.replace(/[^ACGT]/g, "")).filter((item) => {
+    if (!item || seen.has(item)) return false;
+    seen.add(item);
+    return true;
+  });
 }
 
 export function sanitizeSequence(value: string) {

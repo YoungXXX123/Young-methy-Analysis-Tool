@@ -97,6 +97,9 @@ input::placeholder, textarea::placeholder { color: #9aa5a8; }
 .inline-status { display: flex; align-items: center; gap: 5px; margin-top: 8px; font-size: 11px; }
 .inline-status.found { color: #287d5d; }
 .inline-status.missing { color: #ad5148; }
+.target-status-list { display: grid; gap: 2px; margin-top: 8px; }
+.target-status-list .inline-status { margin-top: 0; }
+.target-status-list strong { font-weight: 800; }
 
 .dropzone {
   min-height: 116px;
@@ -224,6 +227,12 @@ input::placeholder, textarea::placeholder { color: #9aa5a8; }
 .raw-heatmap { max-height: 460px; }
 
 .cpg-grid { width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr); gap: 18px; margin-top: 16px; }
+.target-analysis-list { display: grid; gap: 22px; }
+.target-analysis + .target-analysis { padding-top: 18px; border-top: 1px solid var(--soft-line); }
+.target-analysis-head { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; margin-top: 16px; color: #5c7075; font-size: 10px; }
+.target-analysis-head strong { color: var(--teal); font-size: 12px; }
+.target-analysis-head span { overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.target-analysis-head em { color: #819095; font-style: normal; white-space: nowrap; }
 .table-wrap { border: 1px solid var(--soft-line); align-self: start; overflow: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 11px; }
 th { height: 33px; padding: 0 10px; color: #64767b; background: #f4f7f7; text-align: left; font-size: 10px; font-weight: 750; white-space: nowrap; }
@@ -294,6 +303,8 @@ footer { min-height: 42px; display: flex; align-items: center; justify-content: 
   .empty-steps span { gap: 4px; font-size: 9px; }
   .empty-steps b { width: 19px; height: 19px; }
   .cpg-grid { grid-template-columns: minmax(0, 1fr); }
+  .target-analysis-head { grid-template-columns: auto minmax(0, 1fr); }
+  .target-analysis-head em { grid-column: 1 / -1; white-space: normal; }
   .distance-chart { height: 270px; }
   .failure-row { grid-template-columns: 1fr; gap: 4px; }
 }

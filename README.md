@@ -7,7 +7,8 @@ Public, browser-based Sanger methylation efficiency analysis for ABI/AB1 files.
 - Parse ABIF `PBAS2`, `PLOC2`, `FWO_1`, and `DATA9`-`DATA12` records.
 - Optional sliding-window Phred quality trimming.
 - Forward and reverse-complement local alignment using match `+5`, mismatch `-4`, gap open `-20`, and gap extension `-2`.
-- Optional coordinate-aware merging for segmented reads from one sample, with highest-Phred overlap selection and per-segment mapping QC.
+- Optional coordinate-aware merging for segmented reads from one sample, with highest-alignment-score overlap selection and per-segment mapping QC.
+- One or more target/sgRNA sequences with matching heatmap highlights, CpG distance charts, and CSV data.
 - Per-base A/C/G/T signal proportions and match/mismatch heatmaps.
 - CpG distance table, chart, CSV export, and full-resolution PNG export.
 - Arbitrary 1-based position lookup across all samples.

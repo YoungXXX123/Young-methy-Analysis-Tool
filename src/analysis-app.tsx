@@ -28,6 +28,7 @@ import {
   BASES,
   createCpgRows,
   mergeAnalysisResults,
+  parseTargetSequences,
   sanitizeSequence,
   type AnalysisFailure,
   type AnalysisResult,
@@ -72,8 +73,12 @@ function downloadText(content: string, filename: string, type = "text/csv;charse
 }
 
 function cpgCsv(rows: CpgRow[]) {
-  const lines = ["CpG_Position,Distance_to_Target_Center,Average_C_Ratio,Measured_Samples"];
+  const multipleTargets = new Set(rows.map((row) => row.targetNumber)).size > 1;
+  const lines = [multipleTargets
+    ? "Target_Number,Target_Sequence,Target_Start,CpG_Position,Distance_to_Target_Center,Average_C_Ratio,Measured_Samples"
+    : "CpG_Position,Distance_to_Target_Center,Average_C_Ratio,Measured_Samples"];
   rows.forEach((row) => lines.push([
+    ...(multipleTargets ? [row.targetNumber, row.targetSequence, row.targetStart === null ? "" : row.targetStart + 1] : []),
     row.position,
     row.distance,
     row.averageC === null ? "" : row.averageC.toFixed(6),
@@ -222,14 +227,27 @@ export default function AnalysisApp() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const reference = useMemo(() => sanitizeSequence(referenceInput), [referenceInput]);
-  const target = useMemo(() => sanitizeSequence(targetInput), [targetInput]);
+  const targets = useMemo(() => parseTargetSequences(targetInput), [targetInput]);
+  const targetSites = useMemo(() => targets.map((sequence, index) => {
+    const start = reference.indexOf(sequence);
+    return { number: index + 1, sequence, start };
+  }), [reference, targets]);
   const results = useMemo(() => (
     mergeSegments && rawResults.length
       ? [mergeAnalysisResults(`合并样本（${rawResults.length} 个分段）`, rawResults)]
       : rawResults
   ), [mergeSegments, rawResults]);
-  const cpgRows = useMemo(() => createCpgRows(reference, results, target), [reference, results, target]);
-  const targetPosition = target ? reference.indexOf(target) : -1;
+  const cpgRows = useMemo(() => createCpgRows(reference, results, targets), [reference, results, targets]);
+  const cpgGroups = useMemo(() => {
+    const groups = new Map<number, CpgRow[]>();
+    cpgRows.forEach((row) => {
+      const group = groups.get(row.targetNumber);
+      if (group) group.push(row);
+      else groups.set(row.targetNumber, [row]);
+    });
+    return [...groups.values()];
+  }, [cpgRows]);
+  const foundTargetCount = targetSites.filter((site) => site.start >= 0).length;
 
   const addFiles = (incoming: File[]) => {
     const accepted = incoming.filter((file) => file.name.toLowerCase().endsWith(".ab1"));
@@ -280,10 +298,10 @@ export default function AnalysisApp() {
       focusCpg,
       focusAllC,
       highlightTarget,
-      targetSequence: target,
+      targetSequences: targets,
       preview: true,
     }));
-  }, [results, reference, target, chunkSize, focusCpg, focusAllC, highlightTarget]);
+  }, [results, reference, targets, chunkSize, focusCpg, focusAllC, highlightTarget]);
 
   useEffect(() => {
     if (!mergeSegments || !segmentsOpen || !rawResults.length || !rawPreviewRef.current) return;
@@ -292,10 +310,10 @@ export default function AnalysisApp() {
       focusCpg,
       focusAllC,
       highlightTarget,
-      targetSequence: target,
+      targetSequences: targets,
       preview: true,
     }));
-  }, [mergeSegments, segmentsOpen, rawResults, reference, target, chunkSize, focusCpg, focusAllC, highlightTarget]);
+  }, [mergeSegments, segmentsOpen, rawResults, reference, targets, chunkSize, focusCpg, focusAllC, highlightTarget]);
 
   const downloadFullHeatmap = () => {
     const canvas = renderHeatmap(reference, results, {
@@ -303,7 +321,7 @@ export default function AnalysisApp() {
       focusCpg,
       focusAllC,
       highlightTarget,
-      targetSequence: target,
+      targetSequences: targets,
     });
     downloadCanvas(canvas, "Sanger_Full_Alignment_Optimized.png");
   };
@@ -334,9 +352,9 @@ export default function AnalysisApp() {
             <div className="section-label"><span>01</span> 序列输入</div>
             <label className="field-label" htmlFor="reference">参考序列 <em>{reference.length} bp</em></label>
             <textarea id="reference" value={referenceInput} onChange={(event) => setReferenceInput(event.target.value)} placeholder="粘贴参考 DNA 序列…" rows={6} spellCheck={false} />
-            <label className="field-label" htmlFor="target">靶点 / sgRNA 序列 <em>{target.length} bp</em></label>
-            <input id="target" value={targetInput} onChange={(event) => setTargetInput(event.target.value)} placeholder="可选，用于标记与距离分析" spellCheck={false} />
-            {target ? <div className={`inline-status ${targetPosition >= 0 ? "found" : "missing"}`}>{targetPosition >= 0 ? <Check size={13} /> : <Info size={13} />}{targetPosition >= 0 ? `位于参考序列 ${targetPosition + 1}–${targetPosition + target.length}` : "参考序列中未找到该靶点"}</div> : null}
+            <label className="field-label" htmlFor="target">靶点 / sgRNA 序列 <em>{targets.length} 个</em></label>
+            <input id="target" value={targetInput} onChange={(event) => setTargetInput(event.target.value)} placeholder="可选；多个靶点用逗号、空格或换行分隔" spellCheck={false} />
+            {targetSites.length ? <div className="target-status-list">{targetSites.map((site) => <div className={`inline-status ${site.start >= 0 ? "found" : "missing"}`} key={`${site.number}:${site.sequence}`}>{site.start >= 0 ? <Check size={13} /> : <Info size={13} />}<span><strong>靶点 {site.number}</strong> {site.start >= 0 ? `位于 ${site.start + 1}–${site.start + site.sequence.length}` : "未在参考序列中找到"}</span></div>)}</div> : null}
           </section>
 
           <section className="control-section">
@@ -361,7 +379,7 @@ export default function AnalysisApp() {
               <Toggle checked={focusCpg} onChange={setFocusCpg} label="聚焦 CpG 位点" />
               <Toggle checked={focusAllC} onChange={setFocusAllC} label="聚焦全部 C 位点" />
               <div className="range-field"><div><strong>每块碱基数</strong><output>{chunkSize}</output></div><input type="range" min="20" max="100" step="10" value={chunkSize} onChange={(event) => setChunkSize(Number(event.target.value))} /></div>
-              <Toggle checked={mergeSegments} onChange={setMergeSegments} label="合并分段测序" hint="按参考坐标合并，重叠位点优先最高 Phred" />
+              <Toggle checked={mergeSegments} onChange={setMergeSegments} label="合并分段测序" hint="按参考坐标合并，重叠位点采用整体比对得分更高的分段" />
               <Toggle checked={trimActive} onChange={setTrimActive} label="剪切低质量末端" hint="基于滑动窗口 Phred 均值" />
               {trimActive ? <div className="paired-fields"><label>Phred 阈值<input type="number" min="1" max="60" value={qualityThreshold} onChange={(event) => setQualityThreshold(Number(event.target.value))} /></label><label>窗口大小<input type="number" min="2" max="100" value={windowSize} onChange={(event) => setWindowSize(Number(event.target.value))} /></label></div> : null}
             </div> : null}
@@ -396,8 +414,8 @@ export default function AnalysisApp() {
               <Metric value={String(results.length)} label={mergeSegments ? "合并样本" : "成功样本"} accent />
               <Metric value={String(failures.length)} label="失败样本" />
               <Metric value={String(reference.length)} label="参考长度 / bp" />
-              <Metric value={String(cpgRows.length)} label="CpG 位点" />
-              <Metric value={targetPosition >= 0 ? `${targetPosition + 1}–${targetPosition + target.length}` : "—"} label="靶点区间" />
+              <Metric value={String(cpgGroups[0]?.length ?? 0)} label="CpG 位点" />
+              <Metric value={targetSites.length === 1 && targetSites[0].start >= 0 ? `${targetSites[0].start + 1}–${targetSites[0].start + targetSites[0].sequence.length}` : targetSites.length ? `${foundTargetCount}/${targetSites.length}` : "—"} label={targetSites.length > 1 ? "已定位靶点" : "靶点区间"} />
             </section>
 
             <section className="result-section">
@@ -421,7 +439,10 @@ export default function AnalysisApp() {
 
             <section className="result-section">
               <div className="result-title"><div className="title-icon amber"><Table2 size={18} /></div><div><h3>CpG 距离分析</h3><p>相对靶点中心的 CpG 位置与平均 C 峰信号比例</p></div><button className="secondary-button" type="button" onClick={() => downloadText(cpgCsv(cpgRows), "CpG_Distance_Analysis.csv")} disabled={!cpgRows.length}><FileDown size={16} /> 下载 CSV</button></div>
-              {cpgRows.length ? <div className="cpg-grid"><div className="table-wrap"><table><thead><tr><th>CpG 位置</th><th>距离 / bp</th><th>平均 C</th><th>样本数</th></tr></thead><tbody>{cpgRows.slice(0, 8).map((row) => <tr key={row.position}><td><strong>{row.position}</strong></td><td>{row.distance > 0 ? "+" : ""}{row.distance}</td><td>{row.averageC === null ? "—" : `${(row.averageC * 100).toFixed(1)}%`}</td><td>{row.measuredSamples}</td></tr>)}</tbody></table>{cpgRows.length > 8 ? <div className="table-foot">预览 8 / {cpgRows.length} 个位点，完整数据请下载 CSV</div> : null}</div><Chart rows={cpgRows} /></div> : <div className="mini-empty">参考序列中未检测到 CpG 位点</div>}
+              {cpgRows.length ? <div className="target-analysis-list">{cpgGroups.map((rows) => <div className="target-analysis" key={rows[0].targetNumber}>
+                {targets.length > 1 ? <div className="target-analysis-head"><strong>靶点 {rows[0].targetNumber}</strong><span title={rows[0].targetSequence}>{rows[0].targetSequence}</span><em>{rows[0].targetStart === null ? "未定位，按参考序列中心计算" : `参考位置 ${rows[0].targetStart + 1}–${rows[0].targetStart + rows[0].targetSequence.length}`}</em></div> : null}
+                <div className="cpg-grid"><div className="table-wrap"><table><thead><tr><th>CpG 位置</th><th>距离 / bp</th><th>平均 C</th><th>样本数</th></tr></thead><tbody>{rows.slice(0, 8).map((row) => <tr key={`${row.targetNumber}:${row.position}`}><td><strong>{row.position}</strong></td><td>{row.distance > 0 ? "+" : ""}{row.distance}</td><td>{row.averageC === null ? "—" : `${(row.averageC * 100).toFixed(1)}%`}</td><td>{row.measuredSamples}</td></tr>)}</tbody></table>{rows.length > 8 ? <div className="table-foot">预览 8 / {rows.length} 个位点，完整数据请下载 CSV</div> : null}</div><Chart rows={rows} /></div>
+              </div>)}</div> : <div className="mini-empty">参考序列中未检测到 CpG 位点</div>}
             </section>
 
             <section className="result-section">

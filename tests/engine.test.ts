@@ -5,6 +5,7 @@ import {
   mapToReference,
   mergeAnalysisResults,
   parseAbi,
+  parseTargetSequences,
   sanitizeSequence,
   trimLowQuality,
   type Base,
@@ -70,12 +71,28 @@ test("matches sliding-window quality trimming and CpG calculations", () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].position, 3);
   assert.equal(rows[0].averageC, 1);
+  assert.equal(rows[0].targetNumber, 1);
+  assert.equal(rows[0].targetStart, 2);
+});
+
+test("creates a separate CpG distance series for every target site", () => {
+  const reference = "AACGTTCCGAA";
+  const mapped = { name: "sample.ab1", ...mapToReference(reference, record(reference)) };
+  const targets = parseTargetSequences("AACGTT, CCGAA\nAACGTT");
+  const rows = createCpgRows(reference, [mapped], targets);
+
+  assert.deepEqual(targets, ["AACGTT", "CCGAA"]);
+  assert.equal(rows.length, 4);
+  assert.deepEqual([...new Set(rows.map((row) => row.targetNumber))], [1, 2]);
+  assert.deepEqual([...new Set(rows.filter((row) => row.targetNumber === 1).map((row) => row.targetStart))], [0]);
+  assert.deepEqual([...new Set(rows.filter((row) => row.targetNumber === 2).map((row) => row.targetStart))], [6]);
+  assert.notEqual(rows[0].distance, rows[2].distance);
 });
 
 test("merges non-overlapping Sanger segments at their mapped reference coordinates", () => {
   const reference = "TTTACGTCGATGGGCCGTAACGTTAAA";
-  const first = { name: "sample_part1.ab1", ...mapToReference(reference, record("ACGTCGAT")) };
-  const second = { name: "sample_part2.ab1", ...mapToReference(reference, record("CCGTAACG")) };
+  const first = { name: "sample_part1.ab1", ...mapToReference(reference, record("ACGTCGAT")), score: 10 };
+  const second = { name: "sample_part2.ab1", ...mapToReference(reference, record("CCGTAACG")), score: 100 };
   const merged = mergeAnalysisResults("merged sample", [first, second]);
 
   assert.equal(merged.mapping.referenceStart, 4);
@@ -91,16 +108,16 @@ test("merges non-overlapping Sanger segments at their mapped reference coordinat
   assert.ok((distantCpg?.distance ?? 0) > 0);
 });
 
-test("uses the highest mapped Phred score when merged segments overlap", () => {
+test("uses the highest alignment score when merged segments overlap", () => {
   const reference = "ACGTCGAT";
-  const lowRecord = record(reference, Array(reference.length).fill(10));
-  const highRecord = record(reference, Array(reference.length).fill(35));
-  highRecord.proportions[2] = { calledBase: "T", A: 0.05, C: 0.05, G: 0.1, T: 0.8 };
-  const low = { name: "low.ab1", ...mapToReference(reference, lowRecord) };
-  const high = { name: "high.ab1", ...mapToReference(reference, highRecord) };
+  const lowScoreRecord = record(reference, Array(reference.length).fill(40));
+  const highScoreRecord = record(reference, Array(reference.length).fill(10));
+  highScoreRecord.proportions[2] = { calledBase: "T", A: 0.05, C: 0.05, G: 0.1, T: 0.8 };
+  const low = { name: "low.ab1", ...mapToReference(reference, lowScoreRecord), score: 30 };
+  const high = { name: "high.ab1", ...mapToReference(reference, highScoreRecord), score: 40 };
   const merged = mergeAnalysisResults("merged sample", [low, high]);
 
-  assert.equal(merged.mappedQuality.get(2), 35);
+  assert.equal(merged.mappedQuality.get(2), 10);
   assert.equal(merged.matrix.T[2], 0.8);
   assert.equal(merged.matchStatus[2], false);
   assert.equal(merged.mergeSummary?.overlapPositions, reference.length);

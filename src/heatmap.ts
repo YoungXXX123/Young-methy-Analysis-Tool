@@ -5,7 +5,7 @@ export type HeatmapOptions = {
   focusCpg: boolean;
   focusAllC: boolean;
   highlightTarget: boolean;
-  targetSequence: string;
+  targetSequences: string[];
   preview?: boolean;
 };
 
@@ -87,8 +87,10 @@ export function renderHeatmap(reference: string, allResults: AnalysisResult[], o
   context.textBaseline = "middle";
   const cpg = cpgMask(reference);
   const nonCpg = measuredNonCpgMask(reference, results);
-  const targetStart = options.targetSequence ? reference.indexOf(options.targetSequence) : -1;
-  const targetEnd = targetStart >= 0 ? targetStart + options.targetSequence.length : -1;
+  const targetRanges = options.targetSequences.map((sequence) => {
+    const start = reference.indexOf(sequence);
+    return { start, end: start >= 0 ? start + sequence.length : -1 };
+  }).filter((range) => range.start >= 0);
 
   for (let chunk = 0; chunk < visibleChunks; chunk += 1) {
     const start = chunk * options.chunkSize;
@@ -150,7 +152,7 @@ export function renderHeatmap(reference: string, allResults: AnalysisResult[], o
       const global = start + local;
       if (global >= reference.length) break;
       const x = labelWidth + local * cellWidth + cellWidth / 2;
-      if (options.highlightTarget && targetStart >= 0 && global >= targetStart && global < targetEnd) {
+      if (options.highlightTarget && targetRanges.some((range) => global >= range.start && global < range.end)) {
         context.save();
         context.strokeStyle = COLORS.purple;
         context.setLineDash([4, 3]);
