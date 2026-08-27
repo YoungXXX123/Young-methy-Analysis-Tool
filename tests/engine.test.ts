@@ -108,20 +108,24 @@ test("merges non-overlapping Sanger segments at their mapped reference coordinat
   assert.ok((distantCpg?.distance ?? 0) > 0);
 });
 
-test("uses the highest alignment score when merged segments overlap", () => {
+test("selects every overlapping base by its own Phred score", () => {
   const reference = "ACGTCGAT";
-  const lowScoreRecord = record(reference, Array(reference.length).fill(40));
-  const highScoreRecord = record(reference, Array(reference.length).fill(10));
-  highScoreRecord.proportions[2] = { calledBase: "T", A: 0.05, C: 0.05, G: 0.1, T: 0.8 };
-  const low = { name: "low.ab1", ...mapToReference(reference, lowScoreRecord), score: 30 };
-  const high = { name: "high.ab1", ...mapToReference(reference, highScoreRecord), score: 40 };
-  const merged = mergeAnalysisResults("merged sample", [low, high]);
+  const firstRecord = record(reference, [40, 10, 30, 30, 30, 30, 30, 30]);
+  const secondRecord = record(reference, [10, 40, 20, 20, 20, 20, 20, 20]);
+  firstRecord.proportions[0] = { calledBase: "T", A: 0.2, C: 0, G: 0, T: 0.8 };
+  secondRecord.proportions[1] = { calledBase: "A", A: 0.8, C: 0.2, G: 0, T: 0 };
+  const first = { name: "first.ab1", ...mapToReference(reference, firstRecord), score: 10 };
+  const second = { name: "second.ab1", ...mapToReference(reference, secondRecord), score: 100 };
+  const merged = mergeAnalysisResults("merged sample", [first, second]);
 
-  assert.equal(merged.mappedQuality.get(2), 10);
-  assert.equal(merged.matrix.T[2], 0.8);
-  assert.equal(merged.matchStatus[2], false);
+  assert.equal(merged.mappedQuality.get(0), 40);
+  assert.equal(merged.mappedQuality.get(1), 40);
+  assert.equal(merged.matrix.T[0], 0.8);
+  assert.equal(merged.matrix.A[1], 0.8);
+  assert.equal(merged.matchStatus[0], false);
+  assert.equal(merged.matchStatus[1], false);
   assert.equal(merged.mergeSummary?.overlapPositions, reference.length);
-  assert.equal(merged.mergeSummary?.conflictingPositions, 1);
+  assert.equal(merged.mergeSummary?.conflictingPositions, 2);
 });
 
 function writeAscii(view: DataView, offset: number, value: string) {

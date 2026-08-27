@@ -31,7 +31,7 @@ test("retains the analysis and export capabilities", async () => {
   assert.match(engine, /match\[up\] - 20/);
   assert.match(engine, /gapQuery\[up\] - 2/);
   assert.match(engine, /mergeAnalysisResults/);
-  assert.match(engine, /segment\.score > Number\(selectedScore\)/);
+  assert.match(engine, /Number\(incomingQuality\) > Number\(selectedQuality\)/);
   assert.match(engine, /parseTargetSequences/);
   assert.match(heatmap, /renderHeatmap/);
   assert.match(heatmap, /targetRanges\.some/);

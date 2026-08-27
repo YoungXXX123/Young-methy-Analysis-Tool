@@ -379,7 +379,7 @@ export default function AnalysisApp() {
               <Toggle checked={focusCpg} onChange={setFocusCpg} label="聚焦 CpG 位点" />
               <Toggle checked={focusAllC} onChange={setFocusAllC} label="聚焦全部 C 位点" />
               <div className="range-field"><div><strong>每块碱基数</strong><output>{chunkSize}</output></div><input type="range" min="20" max="100" step="10" value={chunkSize} onChange={(event) => setChunkSize(Number(event.target.value))} /></div>
-              <Toggle checked={mergeSegments} onChange={setMergeSegments} label="合并分段测序" hint="按参考坐标合并，重叠位点采用整体比对得分更高的分段" />
+              <Toggle checked={mergeSegments} onChange={setMergeSegments} label="合并分段测序" hint="按参考坐标合并，重叠位点逐碱基采用更高 Phred 分数" />
               <Toggle checked={trimActive} onChange={setTrimActive} label="剪切低质量末端" hint="基于滑动窗口 Phred 均值" />
               {trimActive ? <div className="paired-fields"><label>Phred 阈值<input type="number" min="1" max="60" value={qualityThreshold} onChange={(event) => setQualityThreshold(Number(event.target.value))} /></label><label>窗口大小<input type="number" min="2" max="100" value={windowSize} onChange={(event) => setWindowSize(Number(event.target.value))} /></label></div> : null}
             </div> : null}
