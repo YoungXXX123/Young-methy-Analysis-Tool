@@ -11,6 +11,8 @@ Public, browser-based Sanger methylation efficiency analysis for ABI/AB1 files.
 - One or more target/sgRNA sequences with matching heatmap highlights, CpG distance charts, and CSV data.
 - Per-base A/C/G/T signal proportions and match/mismatch heatmaps.
 - CpG distance table, chart, CSV export, and full-resolution PNG export.
+- CpG methylation is C/(C+T), averaged across valid independent samples or calculated directly from the merged sample. Positions without C/T signal are excluded. Existing CSV column names are retained.
+- Oversized heatmaps download as one ZIP containing full-resolution PNG pages covering all reference positions and samples; ordinary heatmaps retain the single-PNG export.
 - Arbitrary 1-based position lookup across all samples.
 - Local-only file processing: uploaded AB1 files never leave the browser.
 

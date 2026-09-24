@@ -1,5 +1,12 @@
 import { BASES, type AnalysisResult } from "./analysis-engine";
 
+export type HeatmapPage = {
+  chunkStart: number;
+  chunkCount: number;
+  sampleStart: number;
+  sampleCount: number;
+};
+
 export type HeatmapOptions = {
   chunkSize: number;
   focusCpg: boolean;
@@ -7,7 +14,46 @@ export type HeatmapOptions = {
   highlightTarget: boolean;
   targetSequences: string[];
   preview?: boolean;
+  page?: HeatmapPage;
 };
+
+const CELL_HEIGHT = 19;
+const TOP = 58;
+const BOTTOM = 58;
+const GAP = 34;
+
+export function heatmapDimensions(chunkSize: number, sampleCount: number, chunkCount: number, preview = false) {
+  const chunkHeight = TOP + sampleCount * 4 * CELL_HEIGHT + BOTTOM;
+  return {
+    width: (preview ? 150 : 260) + chunkSize * (preview ? 24 : 30) + 32,
+    height: chunkCount * chunkHeight + Math.max(0, chunkCount - 1) * GAP,
+    chunkHeight,
+  };
+}
+
+export function planHeatmapPages(referenceLength: number, sampleCount: number, chunkSize: number): HeatmapPage[] {
+  if (!Number.isInteger(chunkSize) || chunkSize <= 0 || referenceLength <= 0 || sampleCount <= 0) {
+    throw new Error("没有可导出的比对结果");
+  }
+  // Bound both canvas dimensions and raw pixel memory; smaller devices can retry smaller pages.
+  const maxDimension = 8192;
+  const maxPixels = 16_000_000;
+  const width = heatmapDimensions(chunkSize, 1, 1).width;
+  const heightLimit = Math.min(maxDimension, Math.floor(maxPixels / width));
+  const maxSamples = Math.floor((heightLimit - TOP - BOTTOM) / (4 * CELL_HEIGHT));
+  if (width > maxDimension || maxSamples < 1) throw new Error("图片宽度超出可导出范围");
+  const chunkCount = Math.ceil(referenceLength / chunkSize);
+  const pages: HeatmapPage[] = [];
+  for (let sampleStart = 0; sampleStart < sampleCount; sampleStart += maxSamples) {
+    const pageSamples = Math.min(maxSamples, sampleCount - sampleStart);
+    const { chunkHeight } = heatmapDimensions(chunkSize, pageSamples, 1);
+    const maxChunks = Math.max(1, Math.floor((heightLimit + GAP) / (chunkHeight + GAP)));
+    for (let chunkStart = 0; chunkStart < chunkCount; chunkStart += maxChunks) {
+      pages.push({ chunkStart, chunkCount: Math.min(maxChunks, chunkCount - chunkStart), sampleStart, sampleCount: pageSamples });
+    }
+  }
+  return pages;
+}
 
 const COLORS = {
   ink: "#13242b",
@@ -61,18 +107,18 @@ export function fitLabel(context: Pick<CanvasRenderingContext2D, "measureText">,
 }
 
 export function renderHeatmap(reference: string, allResults: AnalysisResult[], options: HeatmapOptions) {
-  const results = options.preview ? allResults.slice(0, 3) : allResults;
+  const page = options.preview ? undefined : options.page;
+  const results = options.preview ? allResults.slice(0, 3) : page
+    ? allResults.slice(page.sampleStart, page.sampleStart + page.sampleCount) : allResults;
   const chunkCount = Math.ceil(reference.length / options.chunkSize);
-  const visibleChunks = options.preview ? Math.min(5, chunkCount) : chunkCount;
+  const firstChunk = page?.chunkStart ?? 0;
+  const visibleChunks = options.preview ? Math.min(5, chunkCount) : page?.chunkCount ?? chunkCount;
   const cellWidth = options.preview ? 24 : 30;
-  const cellHeight = 19;
+  const cellHeight = CELL_HEIGHT;
   const labelWidth = options.preview ? 150 : 260;
-  const top = 58;
-  const bottom = 58;
-  const gap = 34;
-  const chunkHeight = top + results.length * 4 * cellHeight + bottom;
-  const width = labelWidth + options.chunkSize * cellWidth + 32;
-  const height = visibleChunks * chunkHeight + Math.max(0, visibleChunks - 1) * gap;
+  const top = TOP;
+  const gap = GAP;
+  const { width, height, chunkHeight } = heatmapDimensions(options.chunkSize, results.length, visibleChunks, options.preview);
   const scale = options.preview ? Math.min(1.5, window.devicePixelRatio || 1) : 1;
   const canvas = document.createElement("canvas");
   canvas.width = Math.floor(width * scale);
@@ -80,20 +126,23 @@ export function renderHeatmap(reference: string, allResults: AnalysisResult[], o
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("无法创建绘图画布");
+  if (!context) {
+    canvas.width = canvas.height = 0;
+    throw new Error("无法创建绘图画布");
+  }
   context.scale(scale, scale);
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, width, height);
   context.textBaseline = "middle";
   const cpg = cpgMask(reference);
-  const nonCpg = measuredNonCpgMask(reference, results);
+  const nonCpg = measuredNonCpgMask(reference, options.preview ? results : allResults);
   const targetRanges = options.targetSequences.map((sequence) => {
     const start = reference.indexOf(sequence);
     return { start, end: start >= 0 ? start + sequence.length : -1 };
   }).filter((range) => range.start >= 0);
 
   for (let chunk = 0; chunk < visibleChunks; chunk += 1) {
-    const start = chunk * options.chunkSize;
+    const start = (firstChunk + chunk) * options.chunkSize;
     const end = Math.min(reference.length, start + options.chunkSize);
     const originY = chunk * (chunkHeight + gap);
     context.fillStyle = COLORS.ink;
@@ -171,15 +220,4 @@ export function renderHeatmap(reference: string, allResults: AnalysisResult[], o
     context.textAlign = "left";
   }
   return canvas;
-}
-
-export function downloadCanvas(canvas: HTMLCanvasElement, filename: string) {
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const anchor = document.createElement("a");
-    anchor.href = URL.createObjectURL(blob);
-    anchor.download = filename;
-    anchor.click();
-    URL.revokeObjectURL(anchor.href);
-  }, "image/png");
 }

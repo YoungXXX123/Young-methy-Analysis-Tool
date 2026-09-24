@@ -502,7 +502,11 @@ export function createCpgRows(reference: string, results: AnalysisResult[], targ
   targetContexts.forEach((target) => {
     for (let index = 0; index < reference.length - 1; index += 1) {
       if (reference[index] !== "C" || reference[index + 1] !== "G") continue;
-      const values = results.map((result) => result.matrix.C[index]).filter((value) => Number.isFinite(value));
+      const values = results.map((result) => {
+        const c = result.matrix.C[index];
+        const t = result.matrix.T[index];
+        return Number.isFinite(c) && Number.isFinite(t) && c + t > 0 ? c / (c + t) : Number.NaN;
+      }).filter((value) => Number.isFinite(value));
       rows.push({
         targetNumber: target.targetNumber,
         targetSequence: target.targetSequence,

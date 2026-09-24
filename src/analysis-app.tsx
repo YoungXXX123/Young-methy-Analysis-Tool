@@ -34,7 +34,8 @@ import {
   type AnalysisResult,
   type CpgRow,
 } from "./analysis-engine";
-import { downloadCanvas, renderHeatmap } from "./heatmap";
+import { renderHeatmap } from "./heatmap";
+import { createHeatmapDownload, downloadImageFile } from "./heatmap-export";
 
 const DEFAULT_REFERENCE = "";
 const DEFAULT_TARGET = "";
@@ -217,6 +218,8 @@ export default function AnalysisApp() {
   const [rawResults, setRawResults] = useState<AnalysisResult[]>([]);
   const [failures, setFailures] = useState<AnalysisFailure[]>([]);
   const [running, setRunning] = useState(false);
+  const [exportProgress, setExportProgress] = useState<{ completed: number; total: number } | null>(null);
+  const exportingRef = useRef(false);
   const [progress, setProgress] = useState(0);
   const [notice, setNotice] = useState<Notice>(null);
   const [dragging, setDragging] = useState(false);
@@ -315,15 +318,22 @@ export default function AnalysisApp() {
     }));
   }, [mergeSegments, segmentsOpen, rawResults, reference, targets, chunkSize, focusCpg, focusAllC, highlightTarget]);
 
-  const downloadFullHeatmap = () => {
-    const canvas = renderHeatmap(reference, results, {
-      chunkSize,
-      focusCpg,
-      focusAllC,
-      highlightTarget,
-      targetSequences: targets,
-    });
-    downloadCanvas(canvas, "Sanger_Full_Alignment_Optimized.png");
+  const downloadFullHeatmap = async () => {
+    if (exportingRef.current) return;
+    exportingRef.current = true;
+    setExportProgress({ completed: 0, total: 1 });
+    try {
+      const file = await createHeatmapDownload(reference, results, {
+        chunkSize, focusCpg, focusAllC, highlightTarget, targetSequences: targets,
+      }, (completed, total) => setExportProgress({ completed, total }));
+      downloadImageFile(file.blob, file.filename);
+      if (file.pageCount > 1) setNotice({ tone: "success", message: `图片较大，已生成包含 ${file.pageCount} 张原分辨率 PNG 的 ZIP，保留全部样本和参考位置。` });
+    } catch (error) {
+      setNotice({ tone: "error", message: error instanceof Error ? error.message : "图片导出失败，请重试。" });
+    } finally {
+      exportingRef.current = false;
+      setExportProgress(null);
+    }
   };
 
   const sitePositions = positions.split(",").map((value) => Number.parseInt(value.trim(), 10)).filter((value) => Number.isFinite(value));
@@ -419,7 +429,7 @@ export default function AnalysisApp() {
             </section>
 
             <section className="result-section">
-              <div className="result-title"><div className="title-icon"><BarChart3 size={18} /></div><div><h3>比对热图预览</h3><p>{mergeSegments ? `已将 ${rawResults.length} 个 AB1 分段合并为一个样本；` : "显示前 3 个样本、"}前 5 个分块；数值为各碱基峰信号占比（%）</p></div><button className="primary-action" type="button" onClick={downloadFullHeatmap}><Download size={16} /> 下载完整 PNG</button></div>
+              <div className="result-title"><div className="title-icon"><BarChart3 size={18} /></div><div><h3>比对热图预览</h3><p>{mergeSegments ? `已将 ${rawResults.length} 个 AB1 分段合并为一个样本；` : "显示前 3 个样本、"}前 5 个分块；数值为各碱基峰信号占比（%）</p></div><button className="primary-action" type="button" onClick={downloadFullHeatmap} disabled={exportProgress !== null} aria-busy={exportProgress !== null}>{exportProgress ? <LoaderCircle size={16} className="spinning" /> : <Download size={16} />}{exportProgress ? `生成图片 ${exportProgress.completed}/${exportProgress.total}` : "下载完整 PNG"}</button></div>
               <div className="legend"><span><i className="legend-box match" />匹配</span><span><i className="legend-box mismatch" />错配</span><span><i className="legend-line target" />靶点</span><span><i className="legend-letter cpg">CG</i>CpG</span><span><i className="legend-letter cytosine">C</i>非 CpG C</span></div>
               <div className="heatmap-viewport" ref={previewRef} />
               {mergeSegments ? <div className="raw-segments">
@@ -438,10 +448,10 @@ export default function AnalysisApp() {
             </section> : null}
 
             <section className="result-section">
-              <div className="result-title"><div className="title-icon amber"><Table2 size={18} /></div><div><h3>CpG 距离分析</h3><p>相对靶点中心的 CpG 位置与平均 C 峰信号比例</p></div><button className="secondary-button" type="button" onClick={() => downloadText(cpgCsv(cpgRows), "CpG_Distance_Analysis.csv")} disabled={!cpgRows.length}><FileDown size={16} /> 下载 CSV</button></div>
+              <div className="result-title"><div className="title-icon amber"><Table2 size={18} /></div><div><h3>CpG 距离分析</h3><p>{mergeSegments ? "相对靶点中心的 CpG 位置与合并结果 C/(C+T)" : "相对靶点中心的 CpG 位置与各样本 C/(C+T) 的平均值"}</p></div><button className="secondary-button" type="button" onClick={() => downloadText(cpgCsv(cpgRows), "CpG_Distance_Analysis.csv")} disabled={!cpgRows.length}><FileDown size={16} /> 下载 CSV</button></div>
               {cpgRows.length ? <div className="target-analysis-list">{cpgGroups.map((rows) => <div className="target-analysis" key={rows[0].targetNumber}>
                 {targets.length > 1 ? <div className="target-analysis-head"><strong>靶点 {rows[0].targetNumber}</strong><span title={rows[0].targetSequence}>{rows[0].targetSequence}</span><em>{rows[0].targetStart === null ? "未定位，按参考序列中心计算" : `参考位置 ${rows[0].targetStart + 1}–${rows[0].targetStart + rows[0].targetSequence.length}`}</em></div> : null}
-                <div className="cpg-grid"><div className="table-wrap"><table><thead><tr><th>CpG 位置</th><th>距离 / bp</th><th>平均 C</th><th>样本数</th></tr></thead><tbody>{rows.slice(0, 8).map((row) => <tr key={`${row.targetNumber}:${row.position}`}><td><strong>{row.position}</strong></td><td>{row.distance > 0 ? "+" : ""}{row.distance}</td><td>{row.averageC === null ? "—" : `${(row.averageC * 100).toFixed(1)}%`}</td><td>{row.measuredSamples}</td></tr>)}</tbody></table>{rows.length > 8 ? <div className="table-foot">预览 8 / {rows.length} 个位点，完整数据请下载 CSV</div> : null}</div><Chart rows={rows} /></div>
+                <div className="cpg-grid"><div className="table-wrap"><table><thead><tr><th>CpG 位置</th><th>距离 / bp</th><th>{mergeSegments ? "C/(C+T)" : "平均 C/(C+T)"}</th><th>样本数</th></tr></thead><tbody>{rows.slice(0, 8).map((row) => <tr key={`${row.targetNumber}:${row.position}`}><td><strong>{row.position}</strong></td><td>{row.distance > 0 ? "+" : ""}{row.distance}</td><td>{row.averageC === null ? "—" : `${(row.averageC * 100).toFixed(1)}%`}</td><td>{row.measuredSamples}</td></tr>)}</tbody></table>{rows.length > 8 ? <div className="table-foot">预览 8 / {rows.length} 个位点，完整数据请下载 CSV</div> : null}</div><Chart rows={rows} /></div>
               </div>)}</div> : <div className="mini-empty">参考序列中未检测到 CpG 位点</div>}
             </section>
 

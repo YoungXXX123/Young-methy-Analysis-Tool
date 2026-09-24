@@ -89,6 +89,34 @@ test("creates a separate CpG distance series for every target site", () => {
   assert.notEqual(rows[0].distance, rows[2].distance);
 });
 
+test("averages each independent sample's C/(C+T), excluding absent C/T signal", () => {
+  const reference = "AACGTT";
+  const sample = (name: string, c: number, t: number, quality = 30) => {
+    const input = record(reference, Array(reference.length).fill(quality));
+    input.proportions[2] = { calledBase: "C", A: 1 - c - t, C: c, G: 0, T: t };
+    return { name, ...mapToReference(reference, input) };
+  };
+  const first = sample("first", 0.2, 0.3, 10);
+  const second = sample("second", 0.1, 0.1, 40);
+  const noSignal = sample("no-signal", 0, 0);
+  const missing = sample("missing", Number.NaN, Number.NaN);
+  const rows = createCpgRows(reference, [first, second, noSignal, missing], ["AAC", "GTT"]);
+  rows.forEach((row) => {
+    assert.ok(Math.abs(row.averageC! - 0.45) < 1e-12);
+    assert.equal(row.measuredSamples, 2);
+  });
+  const merged = mergeAnalysisResults("merged", [first, second]);
+  const mergedRow = createCpgRows(reference, [merged], "AAC")[0];
+  assert.equal(mergedRow.averageC, 0.5);
+  assert.equal(mergedRow.measuredSamples, 1);
+  assert.equal(first.matrix.C[2], 0.2);
+  assert.equal(second.matrix.C[2], 0.1);
+  const emptyRow = createCpgRows(reference, [noSignal, missing], "AAC")[0];
+  assert.equal(emptyRow.averageC, null);
+  assert.equal(emptyRow.measuredSamples, 0);
+  assert.equal(createCpgRows(reference, [sample("only-t", 0, 0.5)], "AAC")[0].averageC, 0);
+});
+
 test("merges non-overlapping Sanger segments at their mapped reference coordinates", () => {
   const reference = "TTTACGTCGATGGGCCGTAACGTTAAA";
   const first = { name: "sample_part1.ab1", ...mapToReference(reference, record("ACGTCGAT")), score: 10 };
