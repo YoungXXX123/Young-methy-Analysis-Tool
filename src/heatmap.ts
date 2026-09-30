@@ -1,4 +1,4 @@
-import { BASES, type AnalysisResult } from "./analysis-engine";
+import { BASES, getMeasuredNonCpgCMask, type AnalysisResult } from "./analysis-engine";
 
 export type HeatmapPage = {
   chunkStart: number;
@@ -84,21 +84,6 @@ function cpgMask(reference: string) {
   return mask;
 }
 
-function measuredNonCpgMask(reference: string, results: AnalysisResult[]) {
-  const mask = Array(reference.length).fill(false);
-  results.forEach((result) => {
-    for (let index = 0; index < reference.length; index += 1) {
-      if (!Number.isFinite(result.matrix.C[index])) continue;
-      const called = BASES.reduce((best, base) => result.matrix[base][index] > result.matrix[best][index] ? base : best, "A");
-      if (called !== "C") continue;
-      const nextIsG = index + 1 < reference.length && Number.isFinite(result.matrix.A[index + 1]) &&
-        BASES.reduce((best, base) => result.matrix[base][index + 1] > result.matrix[best][index + 1] ? base : best, "A") === "G";
-      if (!nextIsG) mask[index] = true;
-    }
-  });
-  return mask;
-}
-
 export function fitLabel(context: Pick<CanvasRenderingContext2D, "measureText">, label: string, maxWidth: number) {
   if (context.measureText(label).width <= maxWidth) return label;
   let shortened = label;
@@ -135,7 +120,7 @@ export function renderHeatmap(reference: string, allResults: AnalysisResult[], o
   context.fillRect(0, 0, width, height);
   context.textBaseline = "middle";
   const cpg = cpgMask(reference);
-  const nonCpg = measuredNonCpgMask(reference, options.preview ? results : allResults);
+  const nonCpg = getMeasuredNonCpgCMask(reference, options.preview ? results : allResults);
   const targetRanges = options.targetSequences.map((sequence) => {
     const start = reference.indexOf(sequence);
     return { start, end: start >= 0 ? start + sequence.length : -1 };

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createCpgRows,
+  getMeasuredNonCpgCMask,
   mapToReference,
   mergeAnalysisResults,
   parseAbi,
@@ -87,6 +88,16 @@ test("creates a separate CpG distance series for every target site", () => {
   assert.deepEqual([...new Set(rows.filter((row) => row.targetNumber === 1).map((row) => row.targetStart))], [0]);
   assert.deepEqual([...new Set(rows.filter((row) => row.targetNumber === 2).map((row) => row.targetStart))], [6]);
   assert.notEqual(rows[0].distance, rows[2].distance);
+});
+
+test("non-CpG C markers use reference context and a measured C main peak", () => {
+  const reference = "ACGCCAT";
+  const result = { name: "sample.ab1", ...mapToReference(reference, record(reference)) };
+  for (const [index, base] of [[2, "T"], [4, "G"], [6, "C"]] as const) {
+    BASES.forEach((channel) => { result.matrix[channel][index] = channel === base ? 1 : 0; });
+  }
+  const mask = getMeasuredNonCpgCMask(reference, [result]);
+  assert.deepEqual(mask.map((marked, index) => marked ? index : -1).filter((index) => index >= 0), [3]);
 });
 
 test("averages each independent sample's C/(C+T), excluding absent C/T signal", () => {

@@ -464,19 +464,12 @@ export function getMeasuredNonCpgCMask(reference: string, results: AnalysisResul
   const mask = Array(reference.length).fill(false);
   results.forEach((result) => {
     for (let index = 0; index < reference.length; index += 1) {
-      if (Number.isNaN(result.matrix.A[index])) continue;
+      if (reference[index] !== "C" || reference[index + 1] === "G" ||
+        !Number.isFinite(result.matrix.A[index])) continue;
       const calledBase = BASES.reduce((best, base) => (
         result.matrix[base][index] > result.matrix[best][index] ? base : best
       ), "A");
-      if (calledBase !== "C") continue;
-      if (index + 1 >= reference.length || Number.isNaN(result.matrix.A[index + 1])) {
-        mask[index] = true;
-        continue;
-      }
-      const nextCalled = BASES.reduce((best, base) => (
-        result.matrix[base][index + 1] > result.matrix[best][index + 1] ? base : best
-      ), "A");
-      if (nextCalled !== "G") mask[index] = true;
+      if (calledBase === "C") mask[index] = true;
     }
   });
   return mask;
