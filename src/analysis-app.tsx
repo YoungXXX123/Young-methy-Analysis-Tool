@@ -27,6 +27,7 @@ import {
   analyzeFile,
   BASES,
   createCpgRows,
+  createCpnRows,
   mergeAnalysisResults,
   parseTargetSequences,
   sanitizeSequence,
@@ -88,6 +89,18 @@ function cpgCsv(rows: CpgRow[]) {
   return `\uFEFF${lines.join("\n")}`;
 }
 
+function cpnCsv(rows: CpgRow[]) {
+  const multipleTargets = new Set(rows.map((row) => row.targetNumber)).size > 1;
+  const lines = [multipleTargets
+    ? "Target_Number,Original_Target_Sequence,Target_Start,CpN_Position,Distance_to_Target_Center,Average_C_Ratio,Measured_Samples"
+    : "CpN_Position,Distance_to_Target_Center,Average_C_Ratio,Measured_Samples"];
+  rows.forEach((row) => lines.push([
+    ...(multipleTargets ? [row.targetNumber, row.targetSequence, row.targetStart === null ? "" : row.targetStart + 1] : []),
+    row.position, row.distance, row.averageC === null ? "" : row.averageC.toFixed(6), row.measuredSamples,
+  ].join(",")));
+  return `\uFEFF${lines.join("\n")}`;
+}
+
 function niceTickStep(range: number, targetTicks: number) {
   const roughStep = range / Math.max(1, targetTicks);
   const magnitude = 10 ** Math.floor(Math.log10(Math.max(roughStep, Number.EPSILON)));
@@ -96,7 +109,7 @@ function niceTickStep(range: number, targetTicks: number) {
   return niceNormalized * magnitude;
 }
 
-function Chart({ rows }: { rows: CpgRow[] }) {
+function Chart({ rows, label = "CpG" }: { rows: CpgRow[]; label?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -199,12 +212,19 @@ function Chart({ rows }: { rows: CpgRow[] }) {
     observer.observe(canvas);
     return () => observer.disconnect();
   }, [rows]);
-  return <canvas ref={canvasRef} className="distance-chart" aria-label="CpG distance analysis chart" />;
+  return <canvas ref={canvasRef} className="distance-chart" aria-label={`${label} distance analysis chart`} />;
 }
 
 export default function AnalysisApp() {
   const [referenceInput, setReferenceInput] = useState(DEFAULT_REFERENCE);
   const [targetInput, setTargetInput] = useState(DEFAULT_TARGET);
+  const [cpnEnabled, setCpnEnabled] = useState(false);
+  const [cpnDialogOpen, setCpnDialogOpen] = useState(false);
+  const [cpnReferenceInput, setCpnReferenceInput] = useState("");
+  const [cpnTargetInput, setCpnTargetInput] = useState("");
+  const [cpnMode, setCpnMode] = useState<"together" | "alone">("together");
+  const [cpnRun, setCpnRun] = useState<{ reference: string; targets: string[];
+    rawResults: AnalysisResult[]; failures: AnalysisFailure[] } | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [highlightTarget, setHighlightTarget] = useState(true);
   const [focusCpg, setFocusCpg] = useState(false);
@@ -227,10 +247,13 @@ export default function AnalysisApp() {
   const [segmentsOpen, setSegmentsOpen] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
   const rawPreviewRef = useRef<HTMLDivElement>(null);
+  const cpnPreviewRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const reference = useMemo(() => sanitizeSequence(referenceInput), [referenceInput]);
   const targets = useMemo(() => parseTargetSequences(targetInput), [targetInput]);
+  const cpnReference = useMemo(() => sanitizeSequence(cpnReferenceInput), [cpnReferenceInput]);
+  const cpnTargets = useMemo(() => parseTargetSequences(cpnTargetInput), [cpnTargetInput]);
   const targetSites = useMemo(() => targets.map((sequence, index) => {
     const start = reference.indexOf(sequence);
     return { number: index + 1, sequence, start };
@@ -241,6 +264,16 @@ export default function AnalysisApp() {
       : rawResults
   ), [mergeSegments, rawResults]);
   const cpgRows = useMemo(() => createCpgRows(reference, results, targets), [reference, results, targets]);
+  const cpnResults = useMemo(() => cpnRun?.rawResults.length
+    ? mergeSegments ? [mergeAnalysisResults(`合并样本（${cpnRun.rawResults.length} 个分段）`, cpnRun.rawResults)] : cpnRun.rawResults
+    : [], [cpnRun, mergeSegments]);
+  const cpnRows = useMemo(() => cpnRun ? createCpnRows(cpnRun.reference, cpnResults, cpnRun.targets) : [],
+    [cpnRun, cpnResults]);
+  const cpnGroups = useMemo(() => {
+    const groups = new Map<number, CpgRow[]>();
+    cpnRows.forEach((row) => groups.set(row.targetNumber, [...(groups.get(row.targetNumber) ?? []), row]));
+    return [...groups.values()];
+  }, [cpnRows]);
   const cpgGroups = useMemo(() => {
     const groups = new Map<number, CpgRow[]>();
     cpgRows.forEach((row) => {
@@ -253,6 +286,7 @@ export default function AnalysisApp() {
   const foundTargetCount = targetSites.filter((site) => site.start >= 0).length;
 
   const addFiles = (incoming: File[]) => {
+    setCpnRun(null);
     const accepted = incoming.filter((file) => file.name.toLowerCase().endsWith(".ab1"));
     setFiles((current) => {
       const known = new Set(current.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
@@ -262,8 +296,15 @@ export default function AnalysisApp() {
   };
 
   const runAnalysis = async () => {
-    if (!reference) {
+    const runCpg = !cpnEnabled || cpnMode === "together";
+    if (runCpg && !reference) {
       setNotice({ tone: "error", message: "请输入有效的参考序列。" });
+      return;
+    }
+    if (cpnEnabled && (!cpnReference || !cpnTargets.length || cpnTargets.some((target) =>
+      cpnReference.indexOf(target) < 0 || cpnReference.indexOf(target) !== cpnReference.lastIndexOf(target)))) {
+      setNotice({ tone: "error", message: "请在 CpN 窗口输入原始参考序列，并确保每条原始靶序列在其中恰好出现一次。" });
+      setCpnDialogOpen(true);
       return;
     }
     if (!files.length) {
@@ -275,23 +316,56 @@ export default function AnalysisApp() {
     setNotice(null);
     setRawResults([]);
     setFailures([]);
+    setCpnRun(null);
     const successes: AnalysisResult[] = [];
     const errors: AnalysisFailure[] = [];
+    const cpnSuccesses: AnalysisResult[] = [];
+    const cpnErrors: AnalysisFailure[] = [];
     for (let index = 0; index < files.length; index += 1) {
-      try {
-        successes.push(await analyzeFile(files[index], reference, trimActive, qualityThreshold, windowSize));
-      } catch (error) {
-        errors.push({ name: files[index].name, message: error instanceof Error ? error.message : "未知解析错误" });
+      if (runCpg) {
+        try { successes.push(await analyzeFile(files[index], reference, trimActive, qualityThreshold, windowSize)); }
+        catch (error) { errors.push({ name: files[index].name, message: error instanceof Error ? error.message : "未知解析错误" }); }
+      }
+      if (cpnEnabled) {
+        try { cpnSuccesses.push(await analyzeFile(files[index], cpnReference, trimActive, qualityThreshold, windowSize)); }
+        catch (error) { cpnErrors.push({ name: files[index].name, message: error instanceof Error ? error.message : "未知解析错误" }); }
       }
       setProgress(Math.round(((index + 1) / files.length) * 100));
       await new Promise((resolve) => window.setTimeout(resolve, 12));
     }
     setRawResults(successes);
     setFailures(errors);
+    if (cpnEnabled) setCpnRun({ reference: cpnReference, targets: cpnTargets,
+      rawResults: cpnSuccesses, failures: cpnErrors });
     setRunning(false);
-    setNotice(successes.length
-      ? { tone: "success", message: `分析完成：${successes.length} 个 AB1 分段成功${mergeSegments ? "，已合并为 1 个样本" : ""}${errors.length ? `，${errors.length} 个失败` : ""}。` }
+    setNotice(successes.length || cpnSuccesses.length
+      ? { tone: "success", message: cpnEnabled
+        ? `分析完成：CpG ${successes.length} 个、CpN ${cpnSuccesses.length} 个 AB1 分段成功。`
+        : `分析完成：${successes.length} 个 AB1 分段成功${mergeSegments ? "，已合并为 1 个样本" : ""}${errors.length ? `，${errors.length} 个失败` : ""}。` }
       : { tone: "error", message: "没有文件成功完成分析，请检查 AB1 文件和参考序列。" });
+  };
+
+  useEffect(() => {
+    if (!cpnResults.length || !cpnRun || !cpnPreviewRef.current) return;
+    cpnPreviewRef.current.replaceChildren(renderHeatmap(cpnRun.reference, cpnResults, {
+      chunkSize, focusCpg: false, focusAllC: false, focusCpn: true,
+      highlightTarget, targetSequences: cpnRun.targets, preview: true,
+    }));
+  }, [cpnResults, cpnRun, chunkSize, highlightTarget]);
+
+  const downloadCpnHeatmap = async () => {
+    if (!cpnRun || !cpnResults.length || exportingRef.current) return;
+    exportingRef.current = true;
+    setExportProgress({ completed: 0, total: 1 });
+    try {
+      const file = await createHeatmapDownload(cpnRun.reference, cpnResults, {
+        chunkSize, focusCpg: false, focusAllC: false, focusCpn: true,
+        highlightTarget, targetSequences: cpnRun.targets,
+      }, (completed, total) => setExportProgress({ completed, total }));
+      downloadImageFile(file.blob, `CpN_${file.filename}`);
+    } catch (error) {
+      setNotice({ tone: "error", message: error instanceof Error ? error.message : "CpN 热图导出失败。" });
+    } finally { exportingRef.current = false; setExportProgress(null); }
   };
 
   useEffect(() => {
@@ -376,10 +450,19 @@ export default function AnalysisApp() {
               <input ref={inputRef} type="file" multiple accept=".ab1" onChange={(event) => addFiles([...(event.target.files ?? [])])} />
             </div>
             {files.length ? <div className="file-list">
-              <div className="file-list-head"><span>{files.length} 个文件</span><button type="button" onClick={() => setFiles([])}>清空</button></div>
-              {files.slice(0, 5).map((file, index) => <div className="file-item" key={`${file.name}:${file.lastModified}`}><FileArchive size={14} /><span title={file.name}>{file.name}</span><small>{(file.size / 1024).toFixed(0)} KB</small><button type="button" title="移除" aria-label={`移除 ${file.name}`} onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}><X size={13} /></button></div>)}
+              <div className="file-list-head"><span>{files.length} 个文件</span><button type="button" onClick={() => { setFiles([]); setCpnRun(null); }}>清空</button></div>
+              {files.slice(0, 5).map((file, index) => <div className="file-item" key={`${file.name}:${file.lastModified}`}><FileArchive size={14} /><span title={file.name}>{file.name}</span><small>{(file.size / 1024).toFixed(0)} KB</small><button type="button" title="移除" aria-label={`移除 ${file.name}`} onClick={() => { setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index)); setCpnRun(null); }}><X size={13} /></button></div>)}
               {files.length > 5 ? <div className="more-files">另有 {files.length - 5} 个文件</div> : null}
             </div> : null}
+          </section>
+
+          <section className="control-section compact">
+            <Toggle checked={cpnEnabled} onChange={(value) => {
+              setCpnEnabled(value); setCpnRun(null); if (value) setCpnDialogOpen(true);
+            }} label="可选 CpN 分析" hint="使用同一批 AB1，另用未转化的原始参考序列比对" />
+            {cpnEnabled ? <button className="secondary-button" type="button" onClick={() => setCpnDialogOpen(true)}>
+              设置原始参考与展示方式
+            </button> : null}
           </section>
 
           <section className="control-section compact">
@@ -405,12 +488,12 @@ export default function AnalysisApp() {
         <section className="results-panel">
           <div className="results-header">
             <div><span className="eyebrow">Workspace</span><h2>分析结果</h2></div>
-            {results.length ? <button className="secondary-button" type="button" onClick={() => { setRawResults([]); setFailures([]); setNotice(null); setSegmentsOpen(false); }}><RotateCcw size={15} /> 重置结果</button> : null}
+          {results.length || cpnRun ? <button className="secondary-button" type="button" onClick={() => { setRawResults([]); setFailures([]); setCpnRun(null); setNotice(null); setSegmentsOpen(false); }}><RotateCcw size={15} /> 重置结果</button> : null}
           </div>
 
           {notice ? <div className={`notice ${notice.tone}`}>{notice.tone === "success" ? <Check size={17} /> : notice.tone === "error" ? <Info size={17} /> : <Info size={17} />}<span>{notice.message}</span></div> : null}
 
-          {!results.length && !running ? <div className="empty-state">
+          {!results.length && !cpnRun && !running ? <div className="empty-state">
             <div className="empty-visual"><Dna size={46} /><span /><span /></div>
             <h3>等待测序数据</h3>
             <p>输入参考序列并上传 AB1 文件后运行分析。结果包含峰信号比例、双向局部比对、CpG 距离统计与可下载图表。</p>
@@ -430,7 +513,7 @@ export default function AnalysisApp() {
 
             <section className="result-section">
               <div className="result-title"><div className="title-icon"><BarChart3 size={18} /></div><div><h3>比对热图预览</h3><p>{mergeSegments ? `已将 ${rawResults.length} 个 AB1 分段合并为一个样本；` : "显示前 3 个样本、"}前 5 个分块；数值为各碱基峰信号占比（%）</p></div><button className="primary-action" type="button" onClick={downloadFullHeatmap} disabled={exportProgress !== null} aria-busy={exportProgress !== null}>{exportProgress ? <LoaderCircle size={16} className="spinning" /> : <Download size={16} />}{exportProgress ? `生成图片 ${exportProgress.completed}/${exportProgress.total}` : "下载完整 PNG"}</button></div>
-              <div className="legend"><span><i className="legend-box match" />匹配</span><span><i className="legend-box mismatch" />错配</span><span><i className="legend-line target" />靶点</span><span><i className="legend-letter cpg">CG</i>CpG</span><span><i className="legend-letter cytosine">C</i>非 CpG C</span></div>
+              <div className="legend"><span><i className="legend-box match" />匹配</span><span><i className="legend-box mismatch" />错配</span><span><i className="legend-line target" />靶点</span><span><i className="legend-letter cpg">CG</i>CpG</span></div>
               <div className="heatmap-viewport" ref={previewRef} />
               {mergeSegments ? <div className="raw-segments">
                 <button className="raw-segments-toggle" type="button" onClick={() => setSegmentsOpen((value) => !value)} aria-expanded={segmentsOpen}>
@@ -467,9 +550,39 @@ export default function AnalysisApp() {
             {failures.length ? <section className="result-section failures"><div className="result-title"><div className="title-icon coral"><Info size={18} /></div><div><h3>未完成的文件</h3><p>以下文件未能解析或映射</p></div></div>{failures.map((failure) => <div className="failure-row" key={failure.name}><span>{failure.name}</span><small>{failure.message}</small></div>)}</section> : null}
           </div> : null}
 
+          {cpnRun ? <div className="results-stack cpn-results">
+            {cpnResults.length ? <section className="result-section">
+              <div className="result-title"><div className="title-icon amber"><Dna size={18} /></div><div><h3>CpN 原始参考比对热图</h3><p>同一批 AB1 独立比对到未转化参考；绿色 C 是参考非 CpG 且测序判读为 C 的位点</p></div>
+                <button className="primary-action" type="button" onClick={() => void downloadCpnHeatmap()} disabled={exportProgress !== null}><Download size={16} /> 下载完整 PNG</button></div>
+              <div className="heatmap-viewport" ref={cpnPreviewRef} />
+            </section> : null}
+            <section className="result-section">
+              <div className="result-title"><div className="title-icon amber"><Table2 size={18} /></div><div><h3>CpN 距离分析</h3><p>原始参考非 CpG C 且 AB1 在同位点判读为 C；按现有 CpG 逻辑计算 C/(C+T)</p></div>
+                <button className="secondary-button" type="button" onClick={() => downloadText(cpnCsv(cpnRows), "CpN_Distance_Analysis.csv")} disabled={!cpnRows.length}><FileDown size={16} /> 下载 CSV</button></div>
+              {cpnGroups.length ? <div className="target-analysis-list">{cpnGroups.map((rows) => <div className="target-analysis" key={rows[0].targetNumber}>
+                {cpnRun.targets.length > 1 ? <div className="target-analysis-head"><strong>原始靶点 {rows[0].targetNumber}</strong><span>{rows[0].targetSequence}</span><em>参考位置 {Number(rows[0].targetStart) + 1}–{Number(rows[0].targetStart) + rows[0].targetSequence.length}</em></div> : null}
+                <div className="cpg-grid"><div className="table-wrap"><table><thead><tr><th>CpN 位置</th><th>距离 / bp</th><th>{mergeSegments ? "C/(C+T)" : "平均 C/(C+T)"}</th><th>样本数</th></tr></thead><tbody>
+                  {rows.map((row) => <tr key={`${row.targetNumber}:${row.position}`}><td><strong>{row.position}</strong></td><td>{row.distance > 0 ? "+" : ""}{row.distance}</td><td>{((row.averageC ?? 0) * 100).toFixed(1)}%</td><td>{row.measuredSamples}</td></tr>)}
+                </tbody></table></div><Chart rows={rows} label="CpN" /></div>
+              </div>)}</div> : <div className="mini-empty">原始参考中没有同时满足条件的 CpN 位点</div>}
+            </section>
+            {cpnRun.failures.length ? <section className="result-section failures"><h3>CpN 未完成的文件</h3>{cpnRun.failures.map((failure) => <div className="failure-row" key={failure.name}><span>{failure.name}</span><small>{failure.message}</small></div>)}</section> : null}
+          </div> : null}
+
           <footer id="method"><FlaskConical size={16} /><span>Local alignment: match +5 · mismatch −4 · gap open −20 · gap extend −2</span><span className="footer-divider" /><span>ABIF DATA9–12 · PLOC2 · PBAS2</span></footer>
         </section>
       </div>
+      {cpnDialogOpen ? <div className="cpn-dialog-backdrop"><div className="cpn-dialog" role="dialog" aria-modal="true" aria-labelledby="cpn-dialog-title">
+        <div className="result-title"><div><h3 id="cpn-dialog-title">CpN 独立比对设置</h3><p>与 CpG 共用已上传 AB1；输入未经过 bisulfite 转化的参考和靶序列</p></div>
+          <button className="icon-button" type="button" aria-label="关闭 CpN 设置" onClick={() => setCpnDialogOpen(false)}><X size={18} /></button></div>
+        <label className="field-label" htmlFor="cpn-reference">原始参考序列</label>
+        <textarea id="cpn-reference" value={cpnReferenceInput} onChange={(event) => { setCpnReferenceInput(event.target.value); setCpnRun(null); }} rows={6} placeholder="未转化的原始 DNA 序列" spellCheck={false} />
+        <label className="field-label" htmlFor="cpn-target">原始靶序列</label>
+        <input id="cpn-target" value={cpnTargetInput} onChange={(event) => { setCpnTargetInput(event.target.value); setCpnRun(null); }} placeholder="多个原始靶点可用逗号或空格分隔" spellCheck={false} />
+        <div className="cpn-mode"><label><input type="radio" name="cpn-mode" checked={cpnMode === "together"} onChange={() => { setCpnMode("together"); setCpnRun(null); }} /> 与常规 CpG 一起呈现</label>
+          <label><input type="radio" name="cpn-mode" checked={cpnMode === "alone"} onChange={() => { setCpnMode("alone"); setCpnRun(null); }} /> 仅分析并呈现 CpN</label></div>
+        <button className="run-button" type="button" onClick={() => setCpnDialogOpen(false)}>保存设置</button>
+      </div></div> : null}
     </main>
   );
 }

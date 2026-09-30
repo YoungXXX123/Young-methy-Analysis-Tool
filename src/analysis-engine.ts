@@ -514,6 +514,43 @@ export function createCpgRows(reference: string, results: AnalysisResult[], targ
   return rows;
 }
 
+// CpN is assessed only after mapping the same AB1 reads to the unconverted reference.
+// A site is reported only when the reference has a non-CpG C and the mapped
+// chromatogram calls C at that position. The existing CpG ratio is reused.
+export function createCpnRows(reference: string, results: AnalysisResult[], targetSequences: string | string[]): CpgRow[] {
+  const targets = (Array.isArray(targetSequences) ? targetSequences : [targetSequences]).filter(Boolean);
+  if (!targets.length) throw new Error("CpN 分析需要原始靶序列。");
+  const contexts = targets.map((targetSequence, index) => {
+    const start = reference.indexOf(targetSequence);
+    if (start < 0 || start !== reference.lastIndexOf(targetSequence)) {
+      throw new Error(`原始靶序列 ${index + 1} 必须在原始参考序列中恰好出现一次。`);
+    }
+    return { targetNumber: index + 1, targetSequence, targetStart: start,
+      targetCenter: start + (targetSequence.length - 1) / 2 };
+  });
+  const rows: CpgRow[] = [];
+  for (const target of contexts) {
+    for (let index = 0; index < reference.length; index += 1) {
+      if (reference[index] !== "C" || reference[index + 1] === "G") continue;
+      const values = results.flatMap((result) => {
+        const signals = BASES.map((base) => result.matrix[base][index]);
+        if (signals.some((value) => !Number.isFinite(value))) return [];
+        const called = BASES.reduce((best, base) =>
+          result.matrix[base][index] > result.matrix[best][index] ? base : best, "A" as Base);
+        const c = result.matrix.C[index], t = result.matrix.T[index];
+        return called === "C" && c + t > 0 ? [c / (c + t)] : [];
+      });
+      if (!values.length) continue;
+      rows.push({ targetNumber: target.targetNumber, targetSequence: target.targetSequence,
+        targetStart: target.targetStart, position: index + 1,
+        distance: Math.round((index - target.targetCenter) * 10) / 10,
+        averageC: values.reduce((sum, value) => sum + value, 0) / values.length,
+        measuredSamples: values.length });
+    }
+  }
+  return rows;
+}
+
 export function parseTargetSequences(value: string) {
   const seen = new Set<string>();
   return value.toUpperCase().split(/[\s,;，；]+/).map((item) => item.replace(/[^ACGT]/g, "")).filter((item) => {

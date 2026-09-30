@@ -312,3 +312,12 @@ footer { min-height: 42px; display: flex; align-items: center; justify-content: 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+.cpn-dialog-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: #102e36aa; }
+.cpn-dialog { width: min(680px, 100%); max-height: 90vh; overflow: auto; padding: 24px; background: #fff; border-radius: 10px; box-shadow: 0 16px 60px #102e3650; }
+.cpn-dialog .result-title { margin-bottom: 14px; }
+.cpn-dialog textarea, .cpn-dialog > input { display: block; width: 100%; margin: 6px 0 16px; padding: 10px; border: 1px solid var(--line); border-radius: 5px; }
+.cpn-mode { display: flex; flex-wrap: wrap; gap: 16px; margin: 14px 0; font-size: 12px; }
+.cpn-mode label { display: flex; align-items: center; gap: 5px; }
+.cpn-results { margin-top: 20px; }
+.cpn-results .table-wrap { max-height: 380px; }

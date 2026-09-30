@@ -11,6 +11,7 @@ export type HeatmapOptions = {
   chunkSize: number;
   focusCpg: boolean;
   focusAllC: boolean;
+  focusCpn?: boolean;
   highlightTarget: boolean;
   targetSequences: string[];
   preview?: boolean;
@@ -138,6 +139,7 @@ export function renderHeatmap(reference: string, allResults: AnalysisResult[], o
     context.fillText(`${results.length} sample${results.length === 1 ? "" : "s"}`, width - 100, originY + 18);
 
     results.forEach((result, sampleIndex) => {
+      const sampleCpn = options.focusCpn ? getMeasuredNonCpgCMask(reference, [result]) : null;
       const sampleTop = originY + top + sampleIndex * 4 * cellHeight;
       context.fillStyle = COLORS.ink;
       context.font = "600 11px Arial";
@@ -154,8 +156,9 @@ export function renderHeatmap(reference: string, allResults: AnalysisResult[], o
           const x = labelWidth + local * cellWidth;
           const y = sampleTop + baseIndex * cellHeight;
           const value = global < reference.length ? result.matrix[base][global] : Number.NaN;
-          const focused = (!options.focusCpg && !options.focusAllC) ||
-            (options.focusCpg && cpg[global]) || (options.focusAllC && reference[global] === "C");
+          const focused = (!options.focusCpg && !options.focusAllC && !options.focusCpn) ||
+            (options.focusCpg && cpg[global]) || (options.focusAllC && reference[global] === "C") ||
+            (options.focusCpn && sampleCpn?.[global]);
           context.fillStyle = focused ? blue(value) : "#f7f8f8";
           context.fillRect(x, y, cellWidth, cellHeight);
           context.strokeStyle = "#dde4e5";
@@ -194,7 +197,9 @@ export function renderHeatmap(reference: string, allResults: AnalysisResult[], o
         context.strokeRect(labelWidth + local * cellWidth + 2, originY + top - 3, cellWidth - 4, results.length * 4 * cellHeight + 6);
         context.restore();
       }
-      context.fillStyle = cpg[global] ? COLORS.yellow : nonCpg[global] ? COLORS.nonCpg : COLORS.ink;
+      context.fillStyle = options.focusCpn
+        ? nonCpg[global] ? COLORS.nonCpg : COLORS.ink
+        : cpg[global] ? COLORS.yellow : COLORS.ink;
       context.font = `700 ${options.chunkSize > 70 ? 8 : 10}px ui-monospace, monospace`;
       context.textAlign = "center";
       context.fillText(reference[global], x, axisY + 16);

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createCpgRows,
+  createCpnRows,
   getMeasuredNonCpgCMask,
   mapToReference,
   mergeAnalysisResults,
@@ -98,6 +99,24 @@ test("non-CpG C markers use reference context and a measured C main peak", () =>
   }
   const mask = getMeasuredNonCpgCMask(reference, [result]);
   assert.deepEqual(mask.map((marked, index) => marked ? index : -1).filter((index) => index >= 0), [3]);
+});
+
+test("independent CpN rows use the original reference, C calls, and merged highest-Q peaks", () => {
+  const reference = "ACGCCAT";
+  const low = record(reference, Array(reference.length).fill(10));
+  low.proportions[3] = { calledBase: "C", A: 0, C: .6, G: 0, T: .4 };
+  const high = record(reference, Array(reference.length).fill(40));
+  high.proportions[4] = { calledBase: "T", A: 0, C: .2, G: 0, T: .8 };
+  const first = { name: "low", ...mapToReference(reference, low) };
+  const second = { name: "high", ...mapToReference(reference, high) };
+  const merged = mergeAnalysisResults("batch", [first, second]);
+  const rows = createCpnRows(reference, [first, merged], "GCC");
+  assert.deepEqual(rows.map((row) => row.position), [4, 5]);
+  assert.equal(rows[0].averageC, .8);
+  assert.equal(rows[1].measuredSamples, 1);
+  assert.equal(rows[1].averageC, 1);
+  assert.equal(rows[0].distance, 0);
+  assert.throws(() => createCpnRows(reference, [first], "AAA"), /原始靶序列/);
 });
 
 test("averages each independent sample's C/(C+T), excluding absent C/T signal", () => {
