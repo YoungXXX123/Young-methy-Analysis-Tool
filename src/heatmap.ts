@@ -14,6 +14,7 @@ export type HeatmapOptions = {
   focusCpn?: boolean;
   highlightTarget: boolean;
   targetSequences: string[];
+  targetNames?: string[];
   preview?: boolean;
   page?: HeatmapPage;
 };
@@ -122,9 +123,10 @@ export function renderHeatmap(reference: string, allResults: AnalysisResult[], o
   context.textBaseline = "middle";
   const cpg = cpgMask(reference);
   const nonCpg = getMeasuredNonCpgCMask(reference, options.preview ? results : allResults);
-  const targetRanges = options.targetSequences.map((sequence) => {
+  const targetRanges = options.targetSequences.map((sequence, index) => {
     const start = reference.indexOf(sequence);
-    return { start, end: start >= 0 ? start + sequence.length : -1 };
+    return { start, end: start >= 0 ? start + sequence.length : -1,
+      name: options.targetNames?.[index]?.trim() || `靶点 ${index + 1}` };
   }).filter((range) => range.start >= 0);
 
   for (let chunk = 0; chunk < visibleChunks; chunk += 1) {
@@ -137,6 +139,19 @@ export function renderHeatmap(reference: string, allResults: AnalysisResult[], o
     context.fillStyle = COLORS.muted;
     context.font = "12px Arial";
     context.fillText(`${results.length} sample${results.length === 1 ? "" : "s"}`, width - 100, originY + 18);
+
+    if (options.highlightTarget) {
+      const visibleTargets = targetRanges.filter((range) => range.start < end && range.end > start);
+      context.fillStyle = COLORS.purple;
+      context.font = "600 11px Arial";
+      const caption = visibleTargets.map((range) => `${range.name} [${range.start + 1}–${range.end} bp]`).join(" · ");
+      if (caption) context.fillText(fitLabel(context, caption, (end - start) * cellWidth), labelWidth, originY + 37);
+      for (const range of visibleTargets) {
+        const x = labelWidth + (Math.max(start, range.start) - start) * cellWidth;
+        const targetWidth = (Math.min(end, range.end) - Math.max(start, range.start)) * cellWidth;
+        context.fillRect(x, originY + top - 11, targetWidth, 3);
+      }
+    }
 
     results.forEach((result, sampleIndex) => {
       const sampleCpn = options.focusCpn ? getMeasuredNonCpgCMask(reference, [result]) : null;

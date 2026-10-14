@@ -9,6 +9,7 @@ Public, browser-based Sanger methylation efficiency analysis for ABI/AB1 files.
 - Forward and reverse-complement local alignment using match `+5`, mismatch `-4`, gap open `-20`, and gap extension `-2`.
 - Optional coordinate-aware merging for segmented reads from one sample, with per-base highest-Phred overlap selection and per-segment mapping QC.
 - One or more target/sgRNA sequences with matching heatmap highlights, CpG distance charts, and CSV data.
+- Optional names for each CpG or original CpN target; distance charts and alignment heatmaps label the target name and reference interval. Heatmap PNG exports retain the labels.
 - Per-base A/C/G/T signal proportions and match/mismatch heatmaps.
 - CpG distance table, chart, CSV export, and full-resolution PNG export.
 - CpG methylation is C/(C+T), averaged across valid independent samples or calculated directly from the merged sample. Positions without C/T signal are excluded. Existing CSV column names are retained.

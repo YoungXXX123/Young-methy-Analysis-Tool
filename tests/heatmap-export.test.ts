@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { unzipSync } from "fflate";
 import type { AnalysisResult } from "../src/analysis-engine";
-import { heatmapDimensions, planHeatmapPages, type HeatmapOptions } from "../src/heatmap";
+import { heatmapDimensions, planHeatmapPages, renderHeatmap, type HeatmapOptions } from "../src/heatmap";
 import { canvasPng, createHeatmapDownload, downloadImageFile } from "../src/heatmap-export";
 
 const options: HeatmapOptions = { chunkSize: 50, focusCpg: false, focusAllC: false, highlightTarget: true, targetSequences: ["CG"] };
@@ -92,6 +92,19 @@ function samples(length: number, count = 1) {
     matchStatus: Array(length).fill(true),
   })) as AnalysisResult[];
 }
+
+test("target names and reference coordinates survive a target crossing heatmap pages", (t) => {
+  const browser = mockBrowser(t);
+  const reference = "AAAAACGTCCCC";
+  const named = { ...options, chunkSize: 6, targetSequences: ["ACGT"], targetNames: ["位点 α"] };
+  renderHeatmap(reference, samples(reference.length), { ...named,
+    page: { chunkStart: 0, chunkCount: 1, sampleStart: 0, sampleCount: 1 } });
+  renderHeatmap(reference, samples(reference.length), { ...named,
+    page: { chunkStart: 1, chunkCount: 1, sampleStart: 0, sampleCount: 1 } });
+  assert.equal(browser.labels.filter((label) => label === "位点 α [5–8 bp]").length, 2);
+  renderHeatmap(reference, samples(reference.length), { ...named, targetNames: [""] });
+  assert.ok(browser.labels.includes("靶点 1 [5–8 bp]"));
+});
 
 test("ordinary exports stay a single PNG and release the canvas", async (t) => {
   const browser = mockBrowser(t);

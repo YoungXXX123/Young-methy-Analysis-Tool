@@ -35,7 +35,7 @@ import {
   type AnalysisResult,
   type CpgRow,
 } from "./analysis-engine";
-import { renderHeatmap } from "./heatmap";
+import { fitLabel, renderHeatmap } from "./heatmap";
 import { createHeatmapDownload, downloadImageFile } from "./heatmap-export";
 
 const DEFAULT_REFERENCE = "";
@@ -109,7 +109,7 @@ function niceTickStep(range: number, targetTicks: number) {
   return niceNormalized * magnitude;
 }
 
-function Chart({ rows, label = "CpG" }: { rows: CpgRow[]; label?: string }) {
+function Chart({ rows, label = "CpG", targetName = "" }: { rows: CpgRow[]; label?: string; targetName?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -136,6 +136,20 @@ function Chart({ rows, label = "CpG" }: { rows: CpgRow[]; label?: string }) {
       const distanceRange = Math.max(1, maxDistance - minDistance);
       const x = (distance: number) => padding.left + ((distance - minDistance) / distanceRange) * chartWidth;
       const y = (value: number) => padding.top + (1 - value) * chartHeight;
+      const target = rows[0];
+      if (target?.targetStart !== null && target?.targetSequence) {
+        const half = (target.targetSequence.length - 1) / 2;
+        const start = x(Math.max(minDistance, -half)), end = x(Math.min(maxDistance, half));
+        context.fillStyle = "rgba(123, 97, 168, .10)";
+        context.fillRect(start, padding.top, Math.max(1, end - start), chartHeight);
+        context.font = "600 11px Arial";
+        context.textBaseline = "middle";
+        context.textAlign = "center";
+        context.fillStyle = "#7b61a8";
+        const caption = fitLabel(context, `${targetName.trim() || `靶点 ${target.targetNumber}`} · ${target.targetStart! + 1}–${target.targetStart! + target.targetSequence.length} bp`, chartWidth);
+        const halfLabel = context.measureText(caption).width / 2;
+        context.fillText(caption, Math.max(padding.left + halfLabel, Math.min(width - padding.right - halfLabel, x(0))), 10);
+      }
 
       context.font = "12px Arial";
       context.textAlign = "right";
@@ -211,17 +225,19 @@ function Chart({ rows, label = "CpG" }: { rows: CpgRow[]; label?: string }) {
     const observer = new ResizeObserver(draw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [rows]);
+  }, [rows, targetName]);
   return <canvas ref={canvasRef} className="distance-chart" aria-label={`${label} distance analysis chart`} />;
 }
 
 export default function AnalysisApp() {
   const [referenceInput, setReferenceInput] = useState(DEFAULT_REFERENCE);
   const [targetInput, setTargetInput] = useState(DEFAULT_TARGET);
+  const [targetNames, setTargetNames] = useState<Record<string, string>>({});
   const [cpnEnabled, setCpnEnabled] = useState(false);
   const [cpnDialogOpen, setCpnDialogOpen] = useState(false);
   const [cpnReferenceInput, setCpnReferenceInput] = useState("");
   const [cpnTargetInput, setCpnTargetInput] = useState("");
+  const [cpnTargetNames, setCpnTargetNames] = useState<Record<string, string>>({});
   const [cpnMode, setCpnMode] = useState<"together" | "alone">("together");
   const [cpnRun, setCpnRun] = useState<{ reference: string; targets: string[];
     rawResults: AnalysisResult[]; failures: AnalysisFailure[] } | null>(null);
@@ -349,9 +365,10 @@ export default function AnalysisApp() {
     if (!cpnResults.length || !cpnRun || !cpnPreviewRef.current) return;
     cpnPreviewRef.current.replaceChildren(renderHeatmap(cpnRun.reference, cpnResults, {
       chunkSize, focusCpg: false, focusAllC: false, focusCpn: true,
-      highlightTarget, targetSequences: cpnRun.targets, preview: true,
+      highlightTarget, targetSequences: cpnRun.targets,
+      targetNames: cpnRun.targets.map((sequence, index) => cpnTargetNames[sequence]?.trim() || `原始靶点 ${index + 1}`), preview: true,
     }));
-  }, [cpnResults, cpnRun, chunkSize, highlightTarget]);
+  }, [cpnResults, cpnRun, chunkSize, highlightTarget, cpnTargetNames]);
 
   const downloadCpnHeatmap = async () => {
     if (!cpnRun || !cpnResults.length || exportingRef.current) return;
@@ -361,6 +378,7 @@ export default function AnalysisApp() {
       const file = await createHeatmapDownload(cpnRun.reference, cpnResults, {
         chunkSize, focusCpg: false, focusAllC: false, focusCpn: true,
         highlightTarget, targetSequences: cpnRun.targets,
+        targetNames: cpnRun.targets.map((sequence, index) => cpnTargetNames[sequence]?.trim() || `原始靶点 ${index + 1}`),
       }, (completed, total) => setExportProgress({ completed, total }));
       downloadImageFile(file.blob, `CpN_${file.filename}`);
     } catch (error) {
@@ -376,9 +394,10 @@ export default function AnalysisApp() {
       focusAllC,
       highlightTarget,
       targetSequences: targets,
+      targetNames: targets.map((sequence) => targetNames[sequence] ?? ""),
       preview: true,
     }));
-  }, [results, reference, targets, chunkSize, focusCpg, focusAllC, highlightTarget]);
+  }, [results, reference, targets, chunkSize, focusCpg, focusAllC, highlightTarget, targetNames]);
 
   useEffect(() => {
     if (!mergeSegments || !segmentsOpen || !rawResults.length || !rawPreviewRef.current) return;
@@ -388,9 +407,10 @@ export default function AnalysisApp() {
       focusAllC,
       highlightTarget,
       targetSequences: targets,
+      targetNames: targets.map((sequence) => targetNames[sequence] ?? ""),
       preview: true,
     }));
-  }, [mergeSegments, segmentsOpen, rawResults, reference, targets, chunkSize, focusCpg, focusAllC, highlightTarget]);
+  }, [mergeSegments, segmentsOpen, rawResults, reference, targets, chunkSize, focusCpg, focusAllC, highlightTarget, targetNames]);
 
   const downloadFullHeatmap = async () => {
     if (exportingRef.current) return;
@@ -399,6 +419,7 @@ export default function AnalysisApp() {
     try {
       const file = await createHeatmapDownload(reference, results, {
         chunkSize, focusCpg, focusAllC, highlightTarget, targetSequences: targets,
+        targetNames: targets.map((sequence) => targetNames[sequence] ?? ""),
       }, (completed, total) => setExportProgress({ completed, total }));
       downloadImageFile(file.blob, file.filename);
       if (file.pageCount > 1) setNotice({ tone: "success", message: `图片较大，已生成包含 ${file.pageCount} 张原分辨率 PNG 的 ZIP，保留全部样本和参考位置。` });
@@ -438,6 +459,11 @@ export default function AnalysisApp() {
             <textarea id="reference" value={referenceInput} onChange={(event) => setReferenceInput(event.target.value)} placeholder="粘贴参考 DNA 序列…" rows={6} spellCheck={false} />
             <label className="field-label" htmlFor="target">靶点 / sgRNA 序列 <em>{targets.length} 个</em></label>
             <input id="target" value={targetInput} onChange={(event) => setTargetInput(event.target.value)} placeholder="可选；多个靶点用逗号、空格或换行分隔" spellCheck={false} />
+            {targets.map((sequence, index) => <div key={sequence}>
+              <label className="field-label" htmlFor={`target-name-${index}`}>靶点 {index + 1} 名称（可选）</label>
+              <input type="text" id={`target-name-${index}`} value={targetNames[sequence] ?? ""} onChange={(event) =>
+                setTargetNames((current) => ({ ...current, [sequence]: event.target.value }))} placeholder={`未填写时显示：靶点 ${index + 1}`} />
+            </div>)}
             {targetSites.length ? <div className="target-status-list">{targetSites.map((site) => <div className={`inline-status ${site.start >= 0 ? "found" : "missing"}`} key={`${site.number}:${site.sequence}`}>{site.start >= 0 ? <Check size={13} /> : <Info size={13} />}<span><strong>靶点 {site.number}</strong> {site.start >= 0 ? `位于 ${site.start + 1}–${site.start + site.sequence.length}` : "未在参考序列中找到"}</span></div>)}</div> : null}
           </section>
 
@@ -534,7 +560,7 @@ export default function AnalysisApp() {
               <div className="result-title"><div className="title-icon amber"><Table2 size={18} /></div><div><h3>CpG 距离分析</h3><p>{mergeSegments ? "相对靶点中心的 CpG 位置与合并结果 C/(C+T)" : "相对靶点中心的 CpG 位置与各样本 C/(C+T) 的平均值"}</p></div><button className="secondary-button" type="button" onClick={() => downloadText(cpgCsv(cpgRows), "CpG_Distance_Analysis.csv")} disabled={!cpgRows.length}><FileDown size={16} /> 下载 CSV</button></div>
               {cpgRows.length ? <div className="target-analysis-list">{cpgGroups.map((rows) => <div className="target-analysis" key={rows[0].targetNumber}>
                 {targets.length > 1 ? <div className="target-analysis-head"><strong>靶点 {rows[0].targetNumber}</strong><span title={rows[0].targetSequence}>{rows[0].targetSequence}</span><em>{rows[0].targetStart === null ? "未定位，按参考序列中心计算" : `参考位置 ${rows[0].targetStart + 1}–${rows[0].targetStart + rows[0].targetSequence.length}`}</em></div> : null}
-                <div className="cpg-grid"><div className="table-wrap"><table><thead><tr><th>CpG 位置</th><th>距离 / bp</th><th>{mergeSegments ? "C/(C+T)" : "平均 C/(C+T)"}</th><th>样本数</th></tr></thead><tbody>{rows.slice(0, 8).map((row) => <tr key={`${row.targetNumber}:${row.position}`}><td><strong>{row.position}</strong></td><td>{row.distance > 0 ? "+" : ""}{row.distance}</td><td>{row.averageC === null ? "—" : `${(row.averageC * 100).toFixed(1)}%`}</td><td>{row.measuredSamples}</td></tr>)}</tbody></table>{rows.length > 8 ? <div className="table-foot">预览 8 / {rows.length} 个位点，完整数据请下载 CSV</div> : null}</div><Chart rows={rows} /></div>
+                <div className="cpg-grid"><div className="table-wrap"><table><thead><tr><th>CpG 位置</th><th>距离 / bp</th><th>{mergeSegments ? "C/(C+T)" : "平均 C/(C+T)"}</th><th>样本数</th></tr></thead><tbody>{rows.slice(0, 8).map((row) => <tr key={`${row.targetNumber}:${row.position}`}><td><strong>{row.position}</strong></td><td>{row.distance > 0 ? "+" : ""}{row.distance}</td><td>{row.averageC === null ? "—" : `${(row.averageC * 100).toFixed(1)}%`}</td><td>{row.measuredSamples}</td></tr>)}</tbody></table>{rows.length > 8 ? <div className="table-foot">预览 8 / {rows.length} 个位点，完整数据请下载 CSV</div> : null}</div><Chart rows={rows} targetName={targetNames[rows[0].targetSequence]} /></div>
               </div>)}</div> : <div className="mini-empty">参考序列中未检测到 CpG 位点</div>}
             </section>
 
@@ -563,7 +589,7 @@ export default function AnalysisApp() {
                 {cpnRun.targets.length > 1 ? <div className="target-analysis-head"><strong>原始靶点 {rows[0].targetNumber}</strong><span>{rows[0].targetSequence}</span><em>参考位置 {Number(rows[0].targetStart) + 1}–{Number(rows[0].targetStart) + rows[0].targetSequence.length}</em></div> : null}
                 <div className="cpg-grid"><div className="table-wrap"><table><thead><tr><th>CpN 位置</th><th>距离 / bp</th><th>{mergeSegments ? "C/(C+T)" : "平均 C/(C+T)"}</th><th>样本数</th></tr></thead><tbody>
                   {rows.map((row) => <tr key={`${row.targetNumber}:${row.position}`}><td><strong>{row.position}</strong></td><td>{row.distance > 0 ? "+" : ""}{row.distance}</td><td>{((row.averageC ?? 0) * 100).toFixed(1)}%</td><td>{row.measuredSamples}</td></tr>)}
-                </tbody></table></div><Chart rows={rows} label="CpN" /></div>
+                </tbody></table></div><Chart rows={rows} label="CpN" targetName={cpnTargetNames[rows[0].targetSequence]?.trim() || `原始靶点 ${rows[0].targetNumber}`} /></div>
               </div>)}</div> : <div className="mini-empty">原始参考中没有同时满足条件的 CpN 位点</div>}
             </section>
             {cpnRun.failures.length ? <section className="result-section failures"><h3>CpN 未完成的文件</h3>{cpnRun.failures.map((failure) => <div className="failure-row" key={failure.name}><span>{failure.name}</span><small>{failure.message}</small></div>)}</section> : null}
@@ -579,6 +605,11 @@ export default function AnalysisApp() {
         <textarea id="cpn-reference" value={cpnReferenceInput} onChange={(event) => { setCpnReferenceInput(event.target.value); setCpnRun(null); }} rows={6} placeholder="未转化的原始 DNA 序列" spellCheck={false} />
         <label className="field-label" htmlFor="cpn-target">原始靶序列</label>
         <input id="cpn-target" value={cpnTargetInput} onChange={(event) => { setCpnTargetInput(event.target.value); setCpnRun(null); }} placeholder="多个原始靶点可用逗号或空格分隔" spellCheck={false} />
+        {cpnTargets.map((sequence, index) => <div key={sequence}>
+          <label className="field-label" htmlFor={`cpn-target-name-${index}`}>原始靶点 {index + 1} 名称（可选）</label>
+          <input type="text" id={`cpn-target-name-${index}`} value={cpnTargetNames[sequence] ?? ""} onChange={(event) =>
+            setCpnTargetNames((current) => ({ ...current, [sequence]: event.target.value }))} placeholder={`未填写时显示：原始靶点 ${index + 1}`} />
+        </div>)}
         <div className="cpn-mode"><label><input type="radio" name="cpn-mode" checked={cpnMode === "together"} onChange={() => { setCpnMode("together"); setCpnRun(null); }} /> 与常规 CpG 一起呈现</label>
           <label><input type="radio" name="cpn-mode" checked={cpnMode === "alone"} onChange={() => { setCpnMode("alone"); setCpnRun(null); }} /> 仅分析并呈现 CpN</label></div>
         <button className="run-button" type="button" onClick={() => setCpnDialogOpen(false)}>保存设置</button>
